@@ -17,17 +17,33 @@ const getEnvVar = (key: string): string | undefined => {
   return undefined;
 };
 
-// Try multiple naming conventions for the key
-const getKey = () => {
-  return getEnvVar('OPENROUTER_API_KEY') || 
-         getEnvVar('VITE_OPENROUTER_API_KEY') || 
-         getEnvVar('REACT_APP_OPENROUTER_API_KEY') || 
-         getEnvVar('API_KEY') ||
-         getEnvVar('VITE_API_KEY');
+/**
+ * Robustly gets the OpenRouter API Key.
+ * 1. Checks localStorage for a manually set key (bypasses env issues)
+ * 2. Checks env vars
+ * 3. Filters out Supabase keys (starting with eyJ) which cause 401 errors
+ */
+const getOpenRouterKey = () => {
+  const manualKey = localStorage.getItem('openrouter_api_key');
+  if (manualKey && manualKey.startsWith('sk-or-')) return manualKey;
+
+  const keys = [
+    getEnvVar('OPENROUTER_API_KEY'),
+    getEnvVar('VITE_OPENROUTER_API_KEY'),
+    getEnvVar('REACT_APP_OPENROUTER_API_KEY'),
+    getEnvVar('API_KEY'),
+    getEnvVar('VITE_API_KEY')
+  ];
+
+  for (const k of keys) {
+    if (k && !k.startsWith('eyJ') && k.length > 20) {
+      return k;
+    }
+  }
+  return undefined;
 };
 
-const OPENROUTER_API_KEY = getKey();
-const SITE_URL = 'http://localhost:3000'; 
+const SITE_URL = window.location.origin; 
 const SITE_NAME = 'CoParent Intel';
 
 // --- Schemas (JSON Schema format for Prompting) ---
@@ -110,7 +126,6 @@ const fileToBase64 = (file: File): Promise<string> => {
     reader.readAsDataURL(file);
     reader.onload = () => {
       const result = reader.result as string;
-      // result includes "data:image/png;base64," prefix which is good for OpenAI image_url
       resolve(result);
     };
     reader.onerror = error => reject(error);
@@ -118,8 +133,9 @@ const fileToBase64 = (file: File): Promise<string> => {
 };
 
 const callOpenRouter = async (messages: any[], jsonSchemaDesc?: string): Promise<any> => {
-    if (!OPENROUTER_API_KEY) {
-        throw new Error("Missing API Key. Please add OPENROUTER_API_KEY to your environment variables (e.g. .env file).");
+    const key = getOpenRouterKey();
+    if (!key) {
+        throw new Error("MISSING_API_KEY: Please set your OpenRouter API Key in the Assistant Settings.");
     }
 
     try {
@@ -128,10 +144,8 @@ const callOpenRouter = async (messages: any[], jsonSchemaDesc?: string): Promise
             messages: messages
         };
 
-        // If JSON schema is provided, enforce JSON mode and append instruction
         if (jsonSchemaDesc) {
             payload.response_format = { type: "json_object" };
-            // Ensure the system message contains the instruction to use JSON
             const systemMsgIndex = payload.messages.findIndex((m: any) => m.role === 'system');
             const instruction = `\n\nIMPORTANT: Output strictly valid JSON matching this schema:\n${jsonSchemaDesc}`;
             
@@ -145,7 +159,7 @@ const callOpenRouter = async (messages: any[], jsonSchemaDesc?: string): Promise
         const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
             method: "POST",
             headers: {
-                "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+                "Authorization": `Bearer ${key}`,
                 "HTTP-Referer": SITE_URL,
                 "X-Title": SITE_NAME,
                 "Content-Type": "application/json"
@@ -158,18 +172,15 @@ const callOpenRouter = async (messages: any[], jsonSchemaDesc?: string): Promise
             try {
                 const errorJson = await response.json();
                 errorDetails = JSON.stringify(errorJson);
-                // Check specifically for Supabase-style auth errors which might indicate a proxy issue
-                if (errorJson.error?.message === "No cookie auth credentials found") {
-                    console.warn("Received Supabase Auth error instead of OpenRouter response. Check if API Key is correct.");
+                if (errorJson.error?.message?.includes("No cookie auth")) {
+                    throw new Error("AUTH_INTERCEPTED: The request was intercepted by a Supabase auth layer. Please ensure your API Key starts with 'sk-or-'.");
                 }
             } catch (e) {
                 errorDetails = await response.text();
             }
             
-            console.error("OpenRouter API Error:", errorDetails);
-            
             if (response.status === 401) {
-                throw new Error("Authentication failed. Please check your OPENROUTER_API_KEY.");
+                throw new Error("AUTH_FAILED: Authentication with OpenRouter failed. Check your API Key.");
             }
             throw new Error(`AI Provider Error (${response.status}): ${errorDetails}`);
         }
@@ -199,8 +210,6 @@ export const parseFileWithAI = async (file: File): Promise<ParsedConversation> =
   try {
     const dataUrl = await fileToBase64(file);
     
-    // GPT-4o doesn't handle PDFs natively in Chat API like Gemini.
-    // We restrict this to Images for now.
     if (file.type.includes('pdf')) {
         throw new Error("PDF parsing is not supported with the current AI model. Please upload an image (screenshot) or paste the text.");
     }
@@ -208,12 +217,12 @@ export const parseFileWithAI = async (file: File): Promise<ParsedConversation> =
     const messages = [
         {
             role: "system",
-            content: "You are a data extraction specialist. Extract conversation history from the provided image."
+            content: "You are a data extraction specialist. Extract conversation history from the provided image into the required JSON format."
         },
         {
             role: "user",
             content: [
-                { type: "text", text: "Analyze this image and extract the conversation history into JSON." },
+                { type: "text", text: "Analyze this image and extract the conversation history." },
                 { type: "image_url", image_url: { url: dataUrl } }
             ]
         }
@@ -224,7 +233,7 @@ export const parseFileWithAI = async (file: File): Promise<ParsedConversation> =
     return {
       title: result.title,
       participants: new Set(result.participants),
-      lastDate: new Date(), // inferred later
+      lastDate: new Date(),
       messages: result.messages.map((m: any) => ({
         senderName: m.senderName,
         receiverName: "Unknown", 
@@ -271,14 +280,14 @@ export const generatePersonAnalysis = async (personId: string): Promise<void> =>
               ${issues.map(i => `- Issue ID ${i.id}: ${i.title} (${i.status})`).join('\n')}
 
             **Analysis Objectives:**
-            1. **Clinical Assessment:** Provide a professional assessment of their communication style. Look for high-conflict personality traits (splitting, projection, rigidity). Identify any discrepancies between their words and their actions.
-            2. **Identify Unresolved Conflicts (New Issues):** Scan the history for arguments or violations not yet tracked.
-            3. **Behavioral Patterns:** Name specific patterns (e.g., "Unilateral Decision Making").
-            4. **Strategic Recommendations:** Give concrete advice.
+            1. **Clinical Assessment:** Professional assessment using forensic psychology standards.
+            2. **Identify Unresolved Conflicts:** Flag violations not yet tracked.
+            3. **Behavioral Patterns:** Identify specific high-conflict traits.
+            4. **Strategic Recommendations:** Concrete action plan for the user.
         `;
 
         const result = await callOpenRouter([
-            { role: "system", content: "You are a forensic psychology expert." },
+            { role: "system", content: "You are a forensic psychology expert specialized in high-conflict custody cases." },
             { role: "user", content: prompt }
         ], ANALYSIS_SCHEMA_DESC);
         
@@ -336,19 +345,15 @@ export const chatWithAssistant = async (
     file?: File
 ): Promise<any> => {
     
-    // 1. Persist User Message
     await api.saveAssistantMessage(sessionId, AssistantSenderType.User, userContent);
 
-    // 2. Process File (if any) locally to get content for context
     let parsedConversation: ParsedConversation | null = null;
     let fileContext = "";
     
     if (file) {
-        // Try manual parsers first
         try {
-            const text = await file.text(); // For txt/html/csv
+            const text = await file.text();
             if (file.type.includes('image')) {
-                 // Use AI Parser (GPT-4o Vision)
                  try {
                     parsedConversation = await parseFileWithAI(file);
                     fileContext = JSON.stringify(parsedConversation, null, 2);
@@ -356,11 +361,8 @@ export const chatWithAssistant = async (
                     fileContext = `[Error parsing image: ${(err as Error).message}]`;
                  }
             } else if (file.type.includes('pdf')) {
-                 // GPT-4o cannot read PDF natively via Chat API. 
-                 // Fallback to warning unless we add a local PDF parser.
-                 fileContext = "[Attached File: PDF. Note: AI cannot read PDF content directly. Please extract text or upload screenshots.]";
+                 fileContext = "[Attached File: PDF. Note: AI cannot read PDF content directly via current API. Please upload images/screenshots instead.]";
             } else {
-                 // Text-based files
                  if (text.includes('OurFamilyWizard')) {
                      parsedConversation = parseOFWExport(text);
                  } else if (text.includes('Gmail')) {
@@ -376,17 +378,13 @@ export const chatWithAssistant = async (
         }
     }
 
-    // 3. Gather App Context - DEEP CONTEXT FETCH
     const issues = await api.getIssues();
     const agreements = await api.getAgreements();
     const people = await api.getPeople();
-    
-    // Fetch raw details for deep analysis
     const recentMessages = await api.getRecentMessages(100);
     const activeClauses = await api.getAllActiveLegalClauses();
     const activeItems = await api.getAllActiveAgreementItems();
 
-    // Map IDs to Names for context readability
     const personMap = new Map(people.map(p => [p.id, p.fullName]));
 
     const readableMessages = recentMessages.map(m => {
@@ -402,11 +400,10 @@ export const chatWithAssistant = async (
         `- Agreement Item: ${i.fullText}`
     ).join('\n');
 
-    // 4. Construct Prompt
     const systemPrompt = COPARENTING_ASSISTANT_INSTRUCTIONS;
     
     const contextPrompt = `
-        **DEEP CONTEXT (USE THIS DATA TO BE SPECIFIC):**
+        **DEEP CONTEXT:**
         
         [EXISTING ISSUES]
         ${issues.map(i => `- ${i.title} (${i.status}): ${i.description}`).join('\n')}
@@ -415,35 +412,24 @@ export const chatWithAssistant = async (
         ${readableItems}
         ${readableClauses}
         
-        [COMMUNICATION HISTORY (Last 100 Messages)]
+        [COMMUNICATION HISTORY]
         ${readableMessages || "No recent messages found."}
         
         **USER INPUT:** "${userContent}"
         
         ${fileContext ? `**ATTACHED FILE CONTENT:**\n${fileContext}` : ''}
-
-        **TASK:**
-        1. Analyze the input and file content against the Context above.
-        2. Answer the user's question. **YOU MUST CITE SPECIFIC MESSAGES OR RULES FROM THE CONTEXT IF RELEVANT.**
-        3. **Conversation Merging:** If a file was provided, check history for existing threads.
-        4. **Issue Analysis:** Does this content relate to any 'Existing Issues'?
-        5. **Rule Analysis:** Does this content establish a new agreement?
     `;
 
-    // 5. Call OpenRouter
     const result = await callOpenRouter([
         { role: "system", content: systemPrompt },
         { role: "user", content: contextPrompt }
     ], ASSISTANT_RESPONSE_SCHEMA_DESC);
 
-
-    // 6. Execute Identified Actions (Side Effects)
     let linkedType = 'none';
     let linkedId: string | undefined = undefined;
 
     const actions = result.identified_actions;
 
-    // A. Handle Conversations
     if (parsedConversation) {
         if (actions.conversation_update?.existing_conversation_id) {
             const convId = actions.conversation_update.existing_conversation_id;
@@ -467,7 +453,6 @@ export const chatWithAssistant = async (
         }
     }
 
-    // B. Handle Issues
     if (actions.updated_issues && Array.isArray(actions.updated_issues)) {
         for (const update of actions.updated_issues) {
             if (update.status_change && update.status_change !== 'no_change') {
@@ -491,7 +476,6 @@ export const chatWithAssistant = async (
         }
     }
 
-    // C. Handle Agreements
     if (actions.new_agreements && Array.isArray(actions.new_agreements)) {
         for (const ag of actions.new_agreements) {
             const newAg = await api.createAgreement({
@@ -508,7 +492,6 @@ export const chatWithAssistant = async (
         }
     }
 
-    // 7. Save Assistant Response
     return await api.saveAssistantMessage(
         sessionId, 
         AssistantSenderType.Assistant, 
@@ -517,8 +500,6 @@ export const chatWithAssistant = async (
         linkedId
     );
 };
-
-// --- Helpers for Mapping ---
 
 const mapParticipantsToIds = (participants: Set<string>, existingPeople: any[]): string[] => {
     const ids: string[] = [];

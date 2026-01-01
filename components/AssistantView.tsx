@@ -2,17 +2,13 @@ import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../services/api';
 import { chatWithAssistant } from '../services/ai';
 import { AssistantSession, AssistantMessage, AssistantSenderType } from '../types';
-import { Plus, Send, Paperclip, Bot, User, FileText, ArrowRight, Loader2, Trash2 } from 'lucide-react';
+import { Plus, Send, Paperclip, Bot, User, FileText, ArrowRight, Loader2, Trash2, Settings, X, Save, AlertCircle } from 'lucide-react';
 import { format } from 'date-fns';
 import { Link } from 'react-router-dom';
 
-// Simple component to render bold text from "**text**" format
 const FormattedText: React.FC<{ text: string }> = ({ text }) => {
   if (!text) return null;
-  
-  // Split by double asterisks
   const parts = text.split(/(\*\*.*?\*\*)/g);
-  
   return (
     <span>
       {parts.map((part, i) => {
@@ -33,6 +29,8 @@ export const AssistantView: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [uploadingFile, setUploadingFile] = useState<File | null>(null);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [apiKeyInput, setApiKeyInput] = useState(localStorage.getItem('openrouter_api_key') || '');
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -54,7 +52,6 @@ export const AssistantView: React.FC = () => {
     scrollToBottom();
   }, [messages, sending]);
 
-  // Auto-resize textarea
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
@@ -90,18 +87,24 @@ export const AssistantView: React.FC = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
+  const handleSaveSettings = () => {
+    if (apiKeyInput.startsWith('sk-or-')) {
+      localStorage.setItem('openrouter_api_key', apiKeyInput);
+      setIsSettingsOpen(false);
+      alert("API Key saved to browser storage.");
+    } else {
+      alert("Please enter a valid OpenRouter API Key starting with 'sk-or-'.");
+    }
+  };
+
   const handleSendMessage = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    
-    // Check if there is content to send and not currently sending
-    // IMPORTANT: Do NOT check for activeSessionId here, as we create one if it's missing
     if ((!inputText.trim() && !uploadingFile) || sending) return;
 
     setSending(true);
     let targetSessionId = activeSessionId;
 
     try {
-      // 1. If no active session (e.g. first time user), create one
       if (!targetSessionId) {
          try {
              const newSession = await api.createAssistantSession();
@@ -118,7 +121,6 @@ export const AssistantView: React.FC = () => {
       const tempId = Math.random().toString();
       const contentToSend = inputText || (uploadingFile ? `Uploaded file: ${uploadingFile.name}` : '');
       
-      // Optimistic User Message
       const userMsg: AssistantMessage = {
         id: tempId,
         sessionId: targetSessionId,
@@ -129,28 +131,27 @@ export const AssistantView: React.FC = () => {
       
       setMessages(prev => [...prev, userMsg]);
       setInputText('');
-      
-      // Reset textarea height
       if (textareaRef.current) textareaRef.current.style.height = 'auto';
 
-      // 2. Call AI Service
       await chatWithAssistant(targetSessionId, contentToSend, uploadingFile || undefined);
-      
-      // 3. Refresh Messages to get the AI response and the real user message
       const freshMessages = await api.getAssistantMessages(targetSessionId);
       setMessages(freshMessages);
-      
       setUploadingFile(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
 
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      // Fallback UI update for error
+      let errorMsg = "Failed to process message.";
+      if (err.message?.includes("MISSING_API_KEY") || err.message?.includes("AUTH_FAILED") || err.message?.includes("AUTH_INTERCEPTED")) {
+        errorMsg = `**Authentication Error:** ${err.message.split(': ')[1] || 'OpenRouter Key missing or invalid.'}`;
+        setIsSettingsOpen(true);
+      }
+      
       setMessages(prev => [...prev, {
           id: Math.random().toString(),
           sessionId: targetSessionId || '',
-          senderType: AssistantSenderType.System, // Using System or similar to indicate error
-          content: "**Error:** Failed to process message. Please try again.",
+          senderType: AssistantSenderType.System,
+          content: errorMsg,
           createdAt: new Date().toISOString()
       } as AssistantMessage]);
     } finally {
@@ -177,13 +178,22 @@ export const AssistantView: React.FC = () => {
       <div className="w-64 flex flex-col bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden shrink-0">
         <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
           <h3 className="font-bold text-slate-700 text-sm">History</h3>
-          <button 
-            onClick={handleNewSession}
-            className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-            title="New Session"
-          >
-            <Plus className="w-4 h-4" />
-          </button>
+          <div className="flex gap-1">
+            <button 
+              onClick={() => setIsSettingsOpen(true)}
+              className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+              title="Settings"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
+            <button 
+              onClick={handleNewSession}
+              className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+              title="New Session"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+          </div>
         </div>
         <div className="flex-1 overflow-y-auto">
           {sessions.map(session => (
@@ -207,9 +217,15 @@ export const AssistantView: React.FC = () => {
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
         {/* Chat Header */}
-        <div className="p-4 border-b border-slate-100 bg-slate-50 flex items-center gap-2">
-           <Bot className="w-5 h-5 text-indigo-600" />
-           <h2 className="font-bold text-slate-800">CoParent Assistant</h2>
+        <div className="p-4 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
+           <div className="flex items-center gap-2">
+              <Bot className="w-5 h-5 text-indigo-600" />
+              <h2 className="font-bold text-slate-800">CoParent Assistant</h2>
+           </div>
+           <div className="flex items-center gap-2 px-2 py-1 bg-white border border-slate-200 rounded-lg text-[10px] font-bold text-slate-500 uppercase">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              Model: GPT-4o
+           </div>
         </div>
 
         {/* Messages */}
@@ -218,27 +234,29 @@ export const AssistantView: React.FC = () => {
              <div className="flex flex-col items-center justify-center h-full text-slate-400 opacity-60">
                 <Bot className="w-16 h-16 mb-4" />
                 <p>Start a new conversation or upload a document.</p>
-                <div className="flex gap-2 mt-4 text-xs">
-                   <span className="bg-slate-100 px-2 py-1 rounded">"Parse this OFW file"</span>
-                   <span className="bg-slate-100 px-2 py-1 rounded">"Any issues with this email?"</span>
-                </div>
              </div>
           ) : (
             messages.map((msg) => {
                const isUser = msg.senderType === AssistantSenderType.User;
+               const isSystem = msg.senderType === AssistantSenderType.System;
                return (
                  <div key={msg.id} className={`flex gap-4 ${isUser ? 'flex-row-reverse' : ''}`}>
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${isUser ? 'bg-slate-200 text-slate-600' : 'bg-indigo-100 text-indigo-600'}`}>
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
+                      isUser ? 'bg-slate-200 text-slate-600' : 
+                      isSystem ? 'bg-red-100 text-red-600' : 
+                      'bg-indigo-100 text-indigo-600'
+                    }`}>
                        {isUser ? <User className="w-5 h-5" /> : <Bot className="w-5 h-5" />}
                     </div>
                     <div className={`flex flex-col max-w-[80%] ${isUser ? 'items-end' : 'items-start'}`}>
                        <div className={`px-4 py-3 rounded-2xl text-sm leading-relaxed ${
-                          isUser ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-white border border-slate-200 text-slate-800 rounded-tl-none shadow-sm'
+                          isUser ? 'bg-indigo-600 text-white rounded-tr-none' : 
+                          isSystem ? 'bg-red-50 border border-red-200 text-red-800 rounded-tl-none' :
+                          'bg-white border border-slate-200 text-slate-800 rounded-tl-none shadow-sm'
                        }`}>
                           <FormattedText text={msg.content} />
                        </div>
                        
-                       {/* Link Action Card */}
                        {msg.linkedTargetType && msg.linkedTargetId && (
                          <div className="mt-2">
                             <Link 
@@ -275,24 +293,17 @@ export const AssistantView: React.FC = () => {
               <div className="flex items-center gap-2 mb-2 bg-slate-100 px-3 py-2 rounded-lg text-sm text-slate-700 w-fit border border-slate-200 shadow-sm">
                  <FileText className="w-4 h-4 text-indigo-600" />
                  <span className="truncate max-w-xs font-medium">{uploadingFile.name}</span>
-                 <span className="text-xs text-slate-400">({(uploadingFile.size / 1024).toFixed(0)} KB)</span>
                  <button onClick={() => { setUploadingFile(null); if(fileInputRef.current) fileInputRef.current.value = ''; }} className="hover:text-red-500 ml-2 p-1">
                     <Trash2 className="w-4 h-4" />
                  </button>
               </div>
            )}
            <div className="flex gap-2 items-end">
-              <input 
-                 type="file" 
-                 ref={fileInputRef}
-                 className="hidden"
-                 onChange={handleFileSelect}
-              />
+              <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileSelect} />
               <button 
                  type="button"
                  onClick={() => fileInputRef.current?.click()}
                  className={`p-3 rounded-lg transition-colors mb-0.5 ${uploadingFile ? 'text-indigo-600 bg-indigo-50 border border-indigo-100' : 'text-slate-400 hover:bg-slate-100 border border-transparent'}`}
-                 title="Upload File"
               >
                  <Paperclip className="w-5 h-5" />
               </button>
@@ -314,11 +325,50 @@ export const AssistantView: React.FC = () => {
                  <Send className="w-5 h-5" />
               </button>
            </div>
-           <div className="text-[10px] text-slate-400 mt-2 text-center">
-              AI acts as a GAL/Therapist. Verify important information independently.
-           </div>
         </div>
       </div>
+
+      {/* Settings Modal */}
+      {isSettingsOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
+             <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                <h3 className="font-bold text-slate-800 flex items-center gap-2"><Settings className="w-4 h-4" /> AI Settings</h3>
+                <button onClick={() => setIsSettingsOpen(false)}><X className="w-5 h-5 text-slate-400" /></button>
+             </div>
+             <div className="p-6 space-y-4">
+                <div className="bg-amber-50 border border-amber-200 p-4 rounded-lg flex gap-3">
+                   <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
+                   <p className="text-xs text-amber-800 leading-relaxed">
+                      If you're seeing auth errors, it's likely a conflict with your browser environment. 
+                      Paste your <strong>OpenRouter API Key</strong> here to override system settings.
+                   </p>
+                </div>
+                <div>
+                   <label className="block text-xs font-bold text-slate-500 uppercase mb-1">OpenRouter API Key</label>
+                   <input 
+                      type="password" 
+                      value={apiKeyInput} 
+                      onChange={e => setApiKeyInput(e.target.value)} 
+                      placeholder="sk-or-v1-..."
+                      className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none font-mono"
+                   />
+                </div>
+                <div className="pt-2">
+                   <button 
+                      onClick={handleSaveSettings}
+                      className="w-full bg-indigo-600 text-white py-2.5 rounded-lg font-bold text-sm hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2"
+                   >
+                      <Save className="w-4 h-4" /> Save Key to Browser
+                   </button>
+                   <p className="text-[10px] text-slate-400 text-center mt-3">
+                      Your key is saved locally in your browser and is never stored on our database.
+                   </p>
+                </div>
+             </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
