@@ -95,6 +95,61 @@ class Mcp {
   }
   close() { this.child.kill(); }
 }
+
+function sanitizeDiagnostic(value) {
+  return String(value || '')
+    .replaceAll(KEY, '[REDACTED_SECRET_KEY]')
+    .replace(/sb_secret_[A-Za-z0-9_-]+/g, '[REDACTED_SECRET_KEY]')
+    .replace(/eyJ[A-Za-z0-9_.-]{24,}/g, '[REDACTED_JWT]')
+    .slice(0, 700);
+}
+async function diagnoseSupabaseEndpoint(label, pathname) {
+  const target = URL_BASE + pathname;
+  const headers = {
+    apikey: KEY,
+    Accept: 'application/json',
+    'User-Agent': 'CoParentIntel-OFWBridge/0.2 (Node.js backend)',
+  };
+  try {
+    const res = await fetch(target, { headers, signal: AbortSignal.timeout(30000) });
+    let detail = null;
+    if (res.ok) {
+      // Some endpoints return schema or other large responses. Do not retrieve
+      // or disclose application data during a read-only auth probe.
+      await res.body?.cancel();
+    } else {
+      const raw = await res.text();
+      detail = sanitizeDiagnostic(raw);
+    }
+    return {
+      service: label,
+      endpoint: pathname,
+      httpStatus: res.status,
+      ok: res.ok,
+      error: detail,
+      requestId: sanitizeDiagnostic(res.headers.get('sb-request-id') || res.headers.get('x-request-id') || ''),
+    };
+  } catch (e) {
+    return { service: label, endpoint: pathname, ok: false, networkError: sanitizeDiagnostic(e?.cause?.code || e?.message || e) };
+  }
+}
+async function diagnosticProbe(mcp) {
+  const health = await mcp.call('ofw_healthcheck');
+  const tests = [];
+  tests.push(await diagnoseSupabaseEndpoint('Data API (OpenAPI root)', '/rest/v1/'));
+  tests.push(await diagnoseSupabaseEndpoint('Storage (bucket listing)', '/storage/v1/bucket'));
+  console.log(JSON.stringify({
+    probeMode: 'read-only',
+    credentialsExposed: false,
+    ofwConnected: true,
+    ofwHealthStatus: typeof health === 'object' && health !== null ? (health.status || health.result || 'healthcheck returned') : 'healthcheck returned',
+    supabaseProject: new URL(URL_BASE).hostname.split('.')[0],
+    services: tests,
+    result: tests.every(t => t.ok) ? 'API_AND_STORAGE_REACHABLE' : 'CHECK_SERVICE_ERRORS',
+    noDataUploaded: true,
+  }, null, 2));
+}
+
 async function verifyProjectSecret() {
   // Diagnose whether the encrypted sb_secret_ key belongs to THIS project before
   // touching Storage. Data API gateway validates the api key without any JWT.
@@ -235,7 +290,7 @@ async function saveDraft(mcp,file) {
 const mcp=new Mcp();
 try {
   await mcp.init();
-  if(command==='probe') await probe(mcp);
+  if(command==='probe') await diagnosticProbe(mcp);
   else if(command==='sync') await sync(mcp);
   else if(command==='draft') await saveDraft(mcp,process.argv[3]);
   else throw new Error('Usage: bridge.mjs probe | sync | draft <file>');
