@@ -10,7 +10,7 @@ const URL_BASE = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
 const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const BUCKET = process.env.OFW_BRIDGE_BUCKET || 'ofw-bridge';
 const HOME = process.env.LOCALAPPDATA || '';
-const LAUNCHER = process.env.OFW_MCP_LAUNCHER || join(HOME, 'CoParentIntel', 'OFW', 'Start-OFWMCP.ps1');
+const MCP_ENTRY = process.env.OFW_MCP_ENTRY || join(HOME, 'CoParentIntel', 'OFW', 'runtime', 'node_modules', 'ofw-mcp', 'dist', 'index.js');
 const DEFAULT_TIMEZONE = 'America/Chicago';
 const PAGE_SIZE = 100;
 const command = process.argv[2] || 'probe';
@@ -28,7 +28,7 @@ class Mcp {
     delete childEnv.SUPABASE_SERVICE_ROLE_KEY;
     delete childEnv.SUPABASE_URL;
     delete childEnv.OFW_BRIDGE_BUCKET;
-    this.child = spawn('powershell.exe', ['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',LAUNCHER], {
+    this.child = spawn(process.execPath, [MCP_ENTRY], {
       env: childEnv, stdio: ['pipe','pipe','pipe'], windowsHide: true
     });
     this.child.stdout.on('data', data => {
