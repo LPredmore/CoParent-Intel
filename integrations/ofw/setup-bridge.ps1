@@ -38,7 +38,17 @@ $p=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($cred.Password)
 try { $env:SUPABASE_SERVICE_ROLE_KEY=[Runtime.InteropServices.Marshal]::PtrToStringBSTR($p) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($p) }
 $env:SUPABASE_URL='https://nukdhsxnaonzsskmchov.supabase.co'
 $env:OFW_BRIDGE_BUCKET='ofw-bridge'
-$env:OFW_MCP_LAUNCHER=Join-Path $root 'Start-OFWMCP.ps1'
+$ofwCred=Import-Clixml -LiteralPath (Join-Path $root 'ofw-credential.xml')
+$env:OFW_USERNAME=$ofwCred.UserName
+$ofwPtr=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($ofwCred.Password)
+try { $env:OFW_PASSWORD=[Runtime.InteropServices.Marshal]::PtrToStringBSTR($ofwPtr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ofwPtr) }
+$env:OFW_WRITE_MODE='drafts'
+$env:OFW_ALLOW_MARK_READ='false'
+$env:OFW_CONFIRM_MARK_READ='false'
+$env:OFW_FETCH_UNREAD_BODIES='false'
+$env:OFW_CALENDAR_WRITES='false'
+$env:OFW_DISABLE_FETCHPROXY='1'
+$env:OFW_MCP_ENTRY=Join-Path $root 'runtime\node_modules\ofw-mcp\dist\index.js'
 $node='__NODE_EXECUTABLE__'
 & $node (Join-Path $root 'bridge.mjs') @args
 exit $LASTEXITCODE
