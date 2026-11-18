@@ -65,9 +65,9 @@ On successful export, look in your project Supabase Dashboard -> Storage -> `ofw
 | `SUPABASE_URL` | `https://nukdhsxnaonzsskmchov.supabase.co` (set by launcher) |
 | `SUPABASE_SERVICE_ROLE_KEY` | Decrypted locally from Windows credential file by launcher |
 | `OFW_BRIDGE_BUCKET` | `ofw-bridge` (private) |
-| `OFW_MCP_LAUNCHER` | Existing local `Start-OFWMCP.ps1` (OFW credentials stay in the original encrypted file) |
+| `OFW_MCP_ENTRY` | Existing pinned local `ofw-mcp` Node entry point (OFW credentials are decrypted from the original Windows DPAPI file) |
 
-The bridge never passes the Supabase service-role key to the third-party OFW MCP child process. That key is high privilege: keep it only on your trusted Windows machine, do not expose it in client code or environment variables committed to GitHub.
+The bridge starts the third-party OFW MCP directly as a Node child process, preserving JSON and Unicode over stdio. It never passes the Supabase service-role key to that child process. That key is high privilege: keep it only on your trusted Windows machine, do not expose it in client code or environment variables committed to GitHub.
 
 ### Allowed operations
 
