@@ -97,8 +97,10 @@ class Mcp {
 }
 async function storage(path, method='GET',body,extra={}) {
   const url = URL_BASE+'/storage/v1/'+path.split('/').map(x=>encodeURIComponent(x)).join('/');
-  // sb_secret_... is opaque, not a JWT; Supabase requires the apikey header.
-  const headers = {apikey:KEY,...extra};
+  // Supabase Storage REST currently requires BOTH headers. The Storage SDK's
+  // documented backend example sends apikey + Authorization: Bearer <secret key>.
+  // This is Storage-specific; Edge Functions' verify_jwt rules differ.
+  const headers = { apikey: KEY, Authorization: 'Bearer ' + KEY, ...extra };
   if (body !== undefined) headers['Content-Type']='application/json';
   let res;
   try {
@@ -113,6 +115,10 @@ async function storage(path, method='GET',body,extra={}) {
   const txt = await res.text();
   let val; try { val=JSON.parse(txt); } catch {val={raw:txt.slice(0,250)};}
   if (!res.ok) {
+    const msg = String(val?.message || val?.error || '');
+    if (res.status === 401 && /jwt|jws|token/i.test(msg)) {
+      throw new Error('Supabase Storage rejected the Authorization bearer token ('+res.status+'). Storage currently requires an Authorization header even with an sb_secret_ key. Check that this key belongs to the URL project and report this exact error; do not switch to a legacy key.');
+    }
     const e=new Error('Supabase Storage '+method+' '+res.status+' '+JSON.stringify(val).slice(0,500));
     e.status=res.status;throw e;
   }
