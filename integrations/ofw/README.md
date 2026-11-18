@@ -45,7 +45,7 @@ The working Claude Desktop OFW MCP remains the source connector. The bridge is a
 
 ### One-time bridge setup
 
-1. Open the **correct, active Supabase project** in https://supabase.com/dashboard. In **Project Settings > Data API**, copy its **Project URL**, in the form `https://<project-ref>.supabase.co`. Check that the project is running (not paused). Then, in the same project's **Project Settings > API Keys > Publishable and secret API keys**, create a dedicated **Secret API key** named `ofw_bridge` (underscore, not hyphen) if you haven't already. Copy its `sb_secret_...` value; never paste the key in chat.
+1. Open the **correct, active Supabase project** in https://supabase.com/dashboard. In **Integrations > Data API**, copy its **Project URL**, in the form `https://<project-ref>.supabase.co`. Check that the project is running (not paused). Then, in the same project's **Project Settings > API Keys > Publishable and secret API keys**, create a dedicated **Secret API key** named `ofw_bridge` (underscore, not hyphen) if you haven't already. Copy its `sb_secret_...` value; never paste the key in chat.
 2. Run this ONE physical line in Windows PowerShell:
 
     $p=Join-Path $env:TEMP 'setup-ofw-bridge.ps1'; Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/LPredmore/CoParent-Intel/main/integrations/ofw/setup-bridge.ps1' -OutFile $p; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p
