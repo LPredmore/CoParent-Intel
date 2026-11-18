@@ -94,7 +94,7 @@ If the hostname does not resolve, compare the exact Project URL, verify that Sup
 
 A previous bridge version incorrectly added `Authorization: Bearer sb_secret_...` to appease a Storage validation error. That fails with `Invalid Compact JWS`: `sb_secret_` keys are NOT JWTs. The current bridge uses `apikey` only, and validates the key against the actual Supabase project's `/rest/v1/` endpoint before calling Storage.
 
-- `PROJECT_KEY_MISMATCH` or an API-key verification 401/403: the saved key is not accepted by this project. Verify the key was created under the same project URL, and rerun the Windows installer with `-ReplaceSecret` to save that project's `sb_secret_` value.
+- `PROJECT_KEY_REJECTED` or an API-key verification 401/403: the saved key is not accepted by this project. Verify the key was created under the same project URL, and rerun the Windows installer with `-ReplaceSecret` to save that project's `sb_secret_` value.
 - `STORAGE_AUTH_INCOMPATIBLE`: the key was accepted by the Data API, but Storage still requires a JWT `Authorization` header. Do not supply `sb_secret_` as a bearer JWT or rotate keys blindly; this points to a project gateway/Storage compatibility issue requiring further investigation with Supabase support or a supported server-side approach.
 - A successful `probe` must verify OFW authentication, Data API key acceptance, and private Storage access. Only then perform a `sync`.
 
