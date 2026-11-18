@@ -50,7 +50,7 @@ The working Claude Desktop OFW MCP remains the source connector. The bridge is a
 
     $p=Join-Path $env:TEMP 'setup-ofw-bridge.ps1'; Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/LPredmore/CoParent-Intel/main/integrations/ofw/setup-bridge.ps1' -OutFile $p; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p
 
-3. The installer asks for the verified **Project URL**, checks its DNS record, and reuses a previously encrypted `sb_secret_...` key if one is already installed. Otherwise, enter the Secret API key at the **hidden** Windows secure prompt. The key is encrypted locally with Windows DPAPI at `%LOCALAPPDATA%\CoParentIntel\OFW\supabase-bridge-key.xml`; it is not stored in GitHub. To replace a previously saved key, rerun the script with `-ReplaceSecret`.
+3. The installer asks for the verified **Project URL**, checks its DNS record, and reuses a previously encrypted `sb_secret_...` key ONLY if that credential is bound to the same project ref. Older unbound credentials require reentry. Otherwise, enter the Secret API key at the **hidden** Windows secure prompt. The key is encrypted locally with Windows DPAPI at `%LOCALAPPDATA%\CoParentIntel\OFW\supabase-bridge-key.xml`; it is not stored in GitHub. To replace a previously saved key, rerun the script with `-ReplaceSecret`.
 4. Setup executes `probe` (OFW login health and Supabase key check). The private bucket may show `storageBucketReady:false` until the first sync creates it.
 5. After the probe, run the following one-line command to perform the initial export:
 
@@ -105,3 +105,9 @@ To refresh only the bridge script and rerun the probe **without reentering the s
     $b=Join-Path $env:LOCALAPPDATA 'CoParentIntel\OFW'; Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/LPredmore/CoParent-Intel/main/integrations/ofw/bridge.mjs' -OutFile (Join-Path $b 'bridge.mjs'); powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $b 'Start-OFWBridge.ps1') probe
 
 A successful probe confirms access but does not upload OFW data. Do not run `sync` until the probe succeeds.
+
+### Project/key mismatch (November 2026)
+
+The frontend code in `lib/supabase.ts` currently points to project `nukdhsxnaonzsskmchov`, while the user provided a different active dashboard Project URL `https://zhnpbajmumsbejyoqysr.supabase.co`. Those are distinct projects. Before importing any OFW content, confirm which project is the intended database destination; the bridge MUST use that project's own Secret API key. Do not change the app's backend URL without an independent deployment and data migration plan.
+
+The revised installer binds its DPAPI-protected credential to the selected project ref and will ask for a new key when changing projects or migrating from an older, unbound key file. The key label `ofw_bridge` is not the key's value. The setup command remains the same; when prompted, copy the `sb_secret_...` value from the matching project's API Keys page. No OFW data is exported by a `probe`.
