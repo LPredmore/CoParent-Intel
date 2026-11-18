@@ -47,18 +47,22 @@ try{
   throw "DNS resolution failed for both $hostName and supabase.co. Check your computer's network and DNS configuration. No credentials changed."
 }
 Write-Host "Supabase project hostname resolved: $hostName" -ForegroundColor Green
+$projectRef=$hostName.Split('.')[0]
 $configFile=Join-Path $root 'supabase-bridge-config.json'
 $utf8=New-Object System.Text.UTF8Encoding($false)
 $configJson=([pscustomobject]@{supabase_url=$projectUrl}|ConvertTo-Json -Compress)
 [System.IO.File]::WriteAllText($configFile,$configJson,$utf8)
 Write-Host ''
 Write-Host 'Supabase Secret API key name: ofw_bridge (underscore).'
+Write-Host ("Ensure this key was created in the SAME project: https://supabase.com/dashboard/project/" + $projectRef + "/settings/api-keys") -ForegroundColor Yellow
+Write-Host 'If the older setup saved a key without a project binding, it must be re-entered.'
 Write-Host 'The key VALUE begins with sb_secret_. It is unrelated to the project hostname.'
 $needsKey=$ReplaceSecret -or -not (Test-Path -LiteralPath $credFile)
 if(-not $needsKey){
   try{
     $stored=Import-Clixml -LiteralPath $credFile
     if(-not ($stored -is [System.Management.Automation.PSCredential])){throw 'Invalid saved credential'}
+    if($stored.UserName -ne ('supabase_secret|' + $projectRef)){ throw 'Previously saved key is unbound or belongs to a different project' }
     $ptr=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($stored.Password)
     try{
       $testValue=[Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
@@ -84,7 +88,7 @@ if($needsKey){
     [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
   }
   if(-not $isValid){throw 'The key must start with sb_secret_'}
-  [pscredential]::new('supabase_secret',$secret) | Export-Clixml -LiteralPath $credFile -Force
+  [pscredential]::new(('supabase_secret|' + $projectRef),$secret) | Export-Clixml -LiteralPath $credFile -Force
   $secret=$null
 }else{
   Write-Host 'Reusing your already encrypted Supabase Secret API key.' -ForegroundColor Green
