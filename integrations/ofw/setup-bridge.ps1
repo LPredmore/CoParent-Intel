@@ -20,13 +20,23 @@ $launch=Join-Path $root 'Start-OFWBridge.ps1'
 Invoke-WebRequest -UseBasicParsing $bridgeSource -OutFile $bridge
 if (-not (Test-Path $bridge)) { throw 'Bridge download failed' }
 Write-Host ''
-Write-Host 'Find your project service_role (legacy) key in Supabase:'
+Write-Host 'In Supabase, open Project Settings > API Keys > Publishable and secret API keys.'
 Write-Host 'https://supabase.com/dashboard/project/nukdhsxnaonzsskmchov/settings/api-keys'
-Write-Host 'Choose the service_role secret from LEGACY API KEYS, not the anon or publishable key.'
+Write-Host 'Create a dedicated Secret API key named ofw-bridge, and copy its sb_secret_... value.'
+Write-Host 'Do NOT use a Publishable API key or a legacy service_role key.'
 Write-Host 'Paste it at the private password prompt below. The key is encrypted for this Windows user.'
-$secret=Read-Host 'Supabase service_role key (hidden)' -AsSecureString
-if (-not $secret -or $secret.Length -lt 20) {throw 'A valid-looking service_role key is required'}
-$cred=[pscredential]::new('service_role',$secret)
+$secret=Read-Host 'Supabase Secret API key, sb_secret_... (hidden)' -AsSecureString
+if (-not $secret -or $secret.Length -lt 25) { throw 'A Supabase Secret API key is required.' }
+$testPtr=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret)
+try {
+  $testValue=[Runtime.InteropServices.Marshal]::PtrToStringBSTR($testPtr)
+  $isSecretKey=$testValue.StartsWith('sb_secret_')
+} finally {
+  $testValue=$null
+  [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($testPtr)
+}
+if (-not $isSecretKey) { throw 'The value must begin with sb_secret_. Use a Secret API key, not a Publishable or legacy key.' }
+$cred=[pscredential]::new('supabase_secret',$secret)
 $cred | Export-Clixml -LiteralPath $credFile -Force
 $cred=$null
 $secret=$null
@@ -35,7 +45,8 @@ $ErrorActionPreference='Stop'
 $root=Join-Path $env:LOCALAPPDATA 'CoParentIntel\OFW'
 $cred=Import-Clixml -LiteralPath (Join-Path $root 'supabase-bridge-key.xml')
 $p=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($cred.Password)
-try { $env:SUPABASE_SERVICE_ROLE_KEY=[Runtime.InteropServices.Marshal]::PtrToStringBSTR($p) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($p) }
+try { $env:SUPABASE_SECRET_KEY=[Runtime.InteropServices.Marshal]::PtrToStringBSTR($p) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($p) }
+Remove-Item Env:SUPABASE_SERVICE_ROLE_KEY -ErrorAction SilentlyContinue
 $env:SUPABASE_URL='https://nukdhsxnaonzsskmchov.supabase.co'
 $env:OFW_BRIDGE_BUCKET='ofw-bridge'
 $ofwCred=Import-Clixml -LiteralPath (Join-Path $root 'ofw-credential.xml')
