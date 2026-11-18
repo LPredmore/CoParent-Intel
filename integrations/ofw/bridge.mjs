@@ -100,7 +100,16 @@ async function storage(path, method='GET',body,extra={}) {
   // sb_secret_... is opaque, not a JWT; Supabase requires the apikey header.
   const headers = {apikey:KEY,...extra};
   if (body !== undefined) headers['Content-Type']='application/json';
-  const res = await fetch(url,{method,headers,body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(120000)});
+  let res;
+  try {
+    res = await fetch(url,{method,headers,body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(120000)});
+  } catch (e) {
+    const cause = e?.cause?.code;
+    if (cause === 'ENOTFOUND' || cause === 'EAI_AGAIN') {
+      throw new Error('Supabase Project URL hostname could not be resolved: '+new URL(URL_BASE).hostname+'. Copy the correct Project URL from Project Settings > Data API and rerun setup-bridge.ps1. If that URL is correct, check whether the project is paused or DNS is broken.', {cause:e});
+    }
+    throw e;
+  }
   const txt = await res.text();
   let val; try { val=JSON.parse(txt); } catch {val={raw:txt.slice(0,250)};}
   if (!res.ok) {
