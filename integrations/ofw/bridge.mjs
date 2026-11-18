@@ -3,6 +3,7 @@
 // Node >=22.5. All OFW calls go through the locally installed, restricted MCP.
 import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
 const URL_BASE = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
@@ -132,7 +133,7 @@ async function probe(mcp) {
   console.log(JSON.stringify({ofwConnected:true,healthcheck:h,storageBucketReady:!!b,bucket:BUCKET,supabaseProject:URL_BASE.split('//')[1]?.split('.')[0]},null,2));
 }
 function ymd(d) { return d.toISOString().slice(0,10); }
-async function exportMessages(mcp,folder) {
+async function exportMessages(mcp,folder,runId) {
   const first=await mcp.call('ofw_list_messages',{folderId:folder,page:1,size:PAGE_SIZE,view:'compact',autoRefresh:false});
   const total=first.total;
   if(!Number.isInteger(total)||total<0)throw new Error('Invalid '+folder+' count');
@@ -140,7 +141,7 @@ async function exportMessages(mcp,folder) {
   for(let page=1;page<=pages;page++) {
     const r=page===1?first:await mcp.call('ofw_list_messages',{folderId:folder,page,size:PAGE_SIZE,view:'compact',autoRefresh:false});
     if (r.total!==total || !Array.isArray(r.messages)) throw new Error('Message cache changed during export; retry');
-    await put('messages/'+folder+'/page-'+String(page).padStart(4,'0')+'.json',{
+    await put('runs/'+runId+'/messages/'+folder+'/page-'+String(page).padStart(4,'0')+'.json',{
       source:'ourfamilywizard',folder,page,size:PAGE_SIZE,total,exportedAt:new Date().toISOString(),messages:r.messages
     });
     if(page%10===0||page===pages)console.log('Exported '+folder+' page '+page+'/'+pages);
@@ -151,15 +152,16 @@ async function sync(mcp) {
   await ensureBucket(true);
   const check=await mcp.call('ofw_sync_messages',{folders:['inbox','sent'],fetchUnreadBodies:false,deep:false});
   if(check.syncComplete!==true && check.done!==true)throw new Error('OFW message cache backfill incomplete: retry sync before export');
-  const inbox=await exportMessages(mcp,'inbox');
-  const sent=await exportMessages(mcp,'sent');
+  const runId=new Date().toISOString().replace(/[-:.TZ]/g,'')+'-'+randomUUID().slice(0,8);
+  const inbox=await exportMessages(mcp,'inbox',runId);
+  const sent=await exportMessages(mcp,'sent',runId);
   const now=new Date();
   const start=ymd(new Date(now.getTime()-30*86400000));
   const end=ymd(new Date(now.getTime()+180*86400000));
   const calendar=await mcp.call('ofw_list_events',{startDate:start,endDate:end,detailed:true,timeZone:DEFAULT_TIMEZONE,format:'json'});
   const exportedAt=new Date().toISOString();
-  await put('calendar/latest.json',{source:'ourfamilywizard',exportedAt,startDate:start,endDate:end,timeZone:DEFAULT_TIMEZONE,calendar});
-  const manifest={version:1,exportedAt,readOnly:true,inbox,sent,calendar:{startDate:start,endDate:end,path:'calendar/latest.json'},messagePages:'messages/{inbox|sent}/page-NNNN.json'};
+  await put('runs/'+runId+'/calendar.json',{source:'ourfamilywizard',exportedAt,startDate:start,endDate:end,timeZone:DEFAULT_TIMEZONE,calendar});
+  const manifest={version:1,runId,exportedAt,readOnly:true,inbox,sent,calendar:{startDate:start,endDate:end,path:'runs/'+runId+'/calendar.json'},messagePages:'runs/'+runId+'/messages/{inbox|sent}/page-NNNN.json'};
   // Manifest is committed last so readers see only complete exports.
   await put('manifest/latest.json',manifest);
   console.log(JSON.stringify({ok:true,...manifest},null,2));
