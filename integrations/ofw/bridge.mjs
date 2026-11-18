@@ -109,7 +109,7 @@ async function verifyProjectSecret() {
     throw new Error('Supabase project key verification could not reach the Data API: '+(e?.cause?.code || e?.message || String(e)));
   }
   if (res.status === 401 || res.status === 403) {
-    throw new Error('PROJECT_KEY_MISMATCH: Supabase Data API rejected the saved Secret API key for '+new URL(URL_BASE).hostname+' (HTTP '+res.status+'). Make sure the ofw_bridge key was created under THIS project, not another Supabase project. Rerun setup-bridge.ps1 -ReplaceSecret to save the correct project key. Do not paste the key in chat.');
+    throw new Error('PROJECT_KEY_REJECTED: Supabase Data API did not accept the saved Secret API key for '+new URL(URL_BASE).hostname+' (HTTP '+res.status+'). The key may belong to another project, be revoked, or the Data API may be misconfigured. Check the ofw_bridge key under THIS project. Rerun setup-bridge.ps1 -ReplaceSecret if the saved key belongs elsewhere. Do not paste the key in chat.');
   }
   if (!res.ok) {
     throw new Error('Data API key check is inconclusive (HTTP '+res.status+'). Check Data API availability for the project before attempting Storage; no data was exported.');
