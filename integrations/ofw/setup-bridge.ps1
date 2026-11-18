@@ -22,7 +22,7 @@ $launch=Join-Path $root 'Start-OFWBridge.ps1'
 Invoke-WebRequest -UseBasicParsing $bridgeSource -OutFile $bridge
 if (-not (Test-Path $bridge)) { throw 'Bridge download failed' }
 Write-Host ''
-Write-Host 'Copy the actual Project URL from Supabase Dashboard > Project Settings > Data API.' -ForegroundColor Cyan
+Write-Host 'Copy the actual Project URL from Supabase Dashboard > Integrations > Data API (or the project Connect dialog).' -ForegroundColor Cyan
 Write-Host 'The previous hardcoded hostname did not resolve. Do not assume it is the right project.'
 Write-Host 'Example: https://abcdefghijklmnopqrst.supabase.co'
 $inputUrl=(Read-Host 'Paste the full Supabase Project URL').Trim().TrimEnd('/')
