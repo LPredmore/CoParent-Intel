@@ -67,7 +67,7 @@ On successful export, look in your project Supabase Dashboard -> Storage -> `ofw
 | `OFW_BRIDGE_BUCKET` | `ofw-bridge` (private) |
 | `OFW_MCP_ENTRY` | Existing pinned local `ofw-mcp` Node entry point (OFW credentials are decrypted from the original Windows DPAPI file) |
 
-The bridge starts the third-party OFW MCP directly as a Node child process, preserving JSON and Unicode over stdio. It never passes the Supabase Secret API key to that child process. The bridge sends it to Supabase only in the `apikey` HTTP header (never as an `Authorization: Bearer` JWT). That key is high privilege: keep it only on your trusted Windows machine, do not expose it in client code or environment variables committed to GitHub.
+The bridge starts the third-party OFW MCP directly as a Node child process, preserving JSON and Unicode over stdio. It never passes the Supabase Secret API key to that child process. For Supabase Storage requests, it sends the key in both the `apikey` header and the required `Authorization: Bearer` header, matching the documented `@supabase/storage-js` backend example; this is specific to Storage endpoints and may differ from Edge Function rules. That key is high privilege: keep it only on your trusted Windows machine, do not expose it in client code or environment variables committed to GitHub.
 
 ### Allowed operations
 
@@ -89,3 +89,13 @@ Example draft-request JSON fields: `requestId` (unique 8-100 character alphanume
 An `ENOTFOUND <project-ref>.supabase.co` error happens before the API key can be authenticated. The original installer mistakenly hardcoded the project URL from old application code. The new setup validates the URL you copy from the Supabase dashboard and checks DNS *before* attempting authentication. A key label such as `ofw_bridge` is unrelated to that hostname.
 
 If the hostname does not resolve, compare the exact Project URL, verify that Supabase reports the project as active (not paused), and test your local DNS. If only this hostname fails despite a correct active project, contact Supabase support; if every Supabase hostname fails, check your computer or network DNS settings. Do not rotate the Secret API key to fix DNS errors.
+
+### Storage authentication: missing authorization header
+
+If a bridge connection probe fails with `400` and `headers must have required property 'authorization'`, use the current `bridge.mjs`. The direct Storage API enforces that header, even though Supabase's general Secret API-key guidance advises `apikey` only for other services. The bridge now supplies both as documented by the Storage SDK. The project URL remains the root `https://<project-ref>.supabase.co` (omit `/rest/v1/`).
+
+To refresh only the bridge script and rerun the probe **without reentering the secret or resetting the URL**, use this one-line PowerShell command:
+
+    $b=Join-Path $env:LOCALAPPDATA 'CoParentIntel\OFW'; Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/LPredmore/CoParent-Intel/main/integrations/ofw/bridge.mjs' -OutFile (Join-Path $b 'bridge.mjs'); powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $b 'Start-OFWBridge.ps1') probe
+
+A successful probe confirms access but does not upload OFW data. Do not run `sync` until the probe succeeds.
