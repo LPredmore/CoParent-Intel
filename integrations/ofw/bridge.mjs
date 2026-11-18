@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
 const URL_BASE = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
-const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const KEY = process.env.SUPABASE_SECRET_KEY || '';
 const BUCKET = process.env.OFW_BRIDGE_BUCKET || 'ofw-bridge';
 const HOME = process.env.LOCALAPPDATA || '';
 const MCP_ENTRY = process.env.OFW_MCP_ENTRY || join(HOME, 'CoParentIntel', 'OFW', 'runtime', 'node_modules', 'ofw-mcp', 'dist', 'index.js');
@@ -15,7 +15,7 @@ const DEFAULT_TIMEZONE = 'America/Chicago';
 const PAGE_SIZE = 100;
 const command = process.argv[2] || 'probe';
 if (!URL_BASE || !/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(URL_BASE)) throw new Error('SUPABASE_URL is missing or invalid');
-if (!KEY) throw new Error('SUPABASE_SERVICE_ROLE_KEY is missing; run the Windows bridge setup');
+if (!KEY.startsWith('sb_secret_')) throw new Error('SUPABASE_SECRET_KEY must be a Supabase Secret API key (sb_secret_...). Run the updated Windows bridge setup.');
 if (!/^[a-z0-9_-]+$/i.test(BUCKET)) throw new Error('Invalid bucket name');
 
 class Mcp {
@@ -23,8 +23,9 @@ class Mcp {
     this.pending = new Map();
     this.nextId = 1;
     this.buffer = '';
-    // Never pass the Supabase service key into the third-party OFW MCP process.
+    // Never pass privileged Supabase keys into the third-party OFW MCP process.
     const childEnv = { ...process.env };
+    delete childEnv.SUPABASE_SECRET_KEY;
     delete childEnv.SUPABASE_SERVICE_ROLE_KEY;
     delete childEnv.SUPABASE_URL;
     delete childEnv.OFW_BRIDGE_BUCKET;
@@ -96,7 +97,8 @@ class Mcp {
 }
 async function storage(path, method='GET',body,extra={}) {
   const url = URL_BASE+'/storage/v1/'+path.split('/').map(x=>encodeURIComponent(x)).join('/');
-  const headers = {apikey:KEY,Authorization:'Bearer '+KEY,...extra};
+  // sb_secret_... is opaque, not a JWT; Supabase requires the apikey header.
+  const headers = {apikey:KEY,...extra};
   if (body !== undefined) headers['Content-Type']='application/json';
   const res = await fetch(url,{method,headers,body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(120000)});
   const txt = await res.text();
