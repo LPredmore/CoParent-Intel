@@ -148,6 +148,9 @@ async function diagnosticProbe(mcp) {
     result: tests.every(t => t.ok) ? 'API_AND_STORAGE_REACHABLE' : 'CHECK_SERVICE_ERRORS',
     noDataUploaded: true,
   }, null, 2));
+  // Return nonzero exit status so the Windows installer NEVER says a failed
+  // diagnostic means the connection passed or instructs the user to sync.
+  if (!tests.every(t => t.ok)) process.exitCode = 1;
 }
 
 async function verifyProjectSecret() {
