@@ -95,12 +95,33 @@ class Mcp {
   }
   close() { this.child.kill(); }
 }
+async function verifyProjectSecret() {
+  // Diagnose whether the encrypted sb_secret_ key belongs to THIS project before
+  // touching Storage. Data API gateway validates the api key without any JWT.
+  const endpoint = URL_BASE + '/rest/v1/';
+  let res;
+  try {
+    res = await fetch(endpoint, {
+      headers: { apikey: KEY, Accept: 'application/openapi+json' },
+      signal: AbortSignal.timeout(30000),
+    });
+  } catch (e) {
+    throw new Error('Supabase project key verification could not reach the Data API: '+(e?.cause?.code || e?.message || String(e)));
+  }
+  if (res.status === 401 || res.status === 403) {
+    throw new Error('PROJECT_KEY_MISMATCH: Supabase Data API rejected the saved Secret API key for '+new URL(URL_BASE).hostname+' (HTTP '+res.status+'). Make sure the ofw_bridge key was created under THIS project, not another Supabase project. Rerun setup-bridge.ps1 -ReplaceSecret to save the correct project key. Do not paste the key in chat.');
+  }
+  if (!res.ok) {
+    throw new Error('Data API key check is inconclusive (HTTP '+res.status+'). Check Data API availability for the project before attempting Storage; no data was exported.');
+  }
+  return { project: new URL(URL_BASE).hostname, status: res.status, verified: true };
+}
+
 async function storage(path, method='GET',body,extra={}) {
   const url = URL_BASE+'/storage/v1/'+path.split('/').map(x=>encodeURIComponent(x)).join('/');
-  // Supabase Storage REST currently requires BOTH headers. The Storage SDK's
-  // documented backend example sends apikey + Authorization: Bearer <secret key>.
-  // This is Storage-specific; Edge Functions' verify_jwt rules differ.
-  const headers = { apikey: KEY, Authorization: 'Bearer ' + KEY, ...extra };
+  // sb_secret_... is an opaque API key, not a JWT. Never send it in
+  // Authorization: Bearer; current Supabase docs require apikey only.
+  const headers = { apikey: KEY, ...extra };
   if (body !== undefined) headers['Content-Type']='application/json';
   let res;
   try {
@@ -116,8 +137,11 @@ async function storage(path, method='GET',body,extra={}) {
   let val; try { val=JSON.parse(txt); } catch {val={raw:txt.slice(0,250)};}
   if (!res.ok) {
     const msg = String(val?.message || val?.error || '');
-    if (res.status === 401 && /jwt|jws|token/i.test(msg)) {
-      throw new Error('Supabase Storage rejected the Authorization bearer token ('+res.status+'). Storage currently requires an Authorization header even with an sb_secret_ key. Check that this key belongs to the URL project and report this exact error; do not switch to a legacy key.');
+    if (/headers must have required property ['"]authorization['"]/i.test(msg)) {
+      throw new Error('STORAGE_AUTH_INCOMPATIBLE: Supabase accepted the project key on the Data API, but Storage requires a JWT Authorization header. The sb_secret_ key cannot be used as a JWT. Do not retry Bearer sb_secret_ or switch to a legacy key; stop and report this Storage compatibility error.');
+    }
+    if (/Invalid Compact JWS|Invalid JWT/i.test(msg)) {
+      throw new Error('STORAGE_JWT_REJECTED: Supabase Storage attempted to validate an invalid JWT. This bridge sends the secret key in apikey only; check for upstream gateway configuration issues.');
     }
     const e=new Error('Supabase Storage '+method+' '+res.status+' '+JSON.stringify(val).slice(0,500));
     e.status=res.status;throw e;
@@ -143,6 +167,8 @@ async function get(rel) {
 }
 async function probe(mcp) {
   const h=await mcp.call('ofw_healthcheck');
+  const keyCheck = await verifyProjectSecret();
+  console.log('Supabase Data API secret-key validation: succeeded for '+keyCheck.project);
   const b=await ensureBucket(false).catch(e=>{
     if(e.status===404) return null;
     throw e;
@@ -166,6 +192,7 @@ async function exportMessages(mcp,folder,runId) {
   return {total,pages};
 }
 async function sync(mcp) {
+  await verifyProjectSecret();
   await ensureBucket(true);
   const check=await mcp.call('ofw_sync_messages',{folders:['inbox','sent'],fetchUnreadBodies:false,deep:false});
   if(check.syncComplete!==true && check.done!==true)throw new Error('OFW message cache backfill incomplete: retry sync before export');
@@ -185,6 +212,7 @@ async function sync(mcp) {
 }
 async function saveDraft(mcp,file) {
   if(!file)throw new Error('Usage: bridge draft C:\\path\\to\\draft.json');
+  await verifyProjectSecret();
   await ensureBucket(true);
   const item=JSON.parse(await readFile(file,'utf8'));
   if(typeof item.requestId!=='string'||!/^[a-zA-Z0-9_-]{8,100}$/.test(item.requestId))throw new Error('draft requestId must be 8-100 alphanumeric/underscore/hyphen characters');
