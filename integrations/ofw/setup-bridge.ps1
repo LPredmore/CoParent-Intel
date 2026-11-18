@@ -4,6 +4,8 @@
   Requires the OFW MCP installer already working in Claude Desktop.
   Only creates a private Storage bucket on first "sync"; never alters app tables.
 #>
+[CmdletBinding()]
+param([switch]$ReplaceSecret)
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $root = Join-Path $env:LOCALAPPDATA 'CoParentIntel\OFW'
@@ -20,26 +22,73 @@ $launch=Join-Path $root 'Start-OFWBridge.ps1'
 Invoke-WebRequest -UseBasicParsing $bridgeSource -OutFile $bridge
 if (-not (Test-Path $bridge)) { throw 'Bridge download failed' }
 Write-Host ''
-Write-Host 'In Supabase, open Project Settings > API Keys > Publishable and secret API keys.'
-Write-Host 'https://supabase.com/dashboard/project/nukdhsxnaonzsskmchov/settings/api-keys'
-Write-Host 'Create a dedicated Secret API key named ofw-bridge, and copy its sb_secret_... value.'
-Write-Host 'Do NOT use a Publishable API key or a legacy service_role key.'
-Write-Host 'Paste it at the private password prompt below. The key is encrypted for this Windows user.'
-$secret=Read-Host 'Supabase Secret API key, sb_secret_... (hidden)' -AsSecureString
-if (-not $secret -or $secret.Length -lt 25) { throw 'A Supabase Secret API key is required.' }
-$testPtr=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret)
-try {
-  $testValue=[Runtime.InteropServices.Marshal]::PtrToStringBSTR($testPtr)
-  $isSecretKey=$testValue.StartsWith('sb_secret_')
-} finally {
-  $testValue=$null
-  [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($testPtr)
+Write-Host 'Copy the actual Project URL from Supabase Dashboard > Project Settings > Data API.' -ForegroundColor Cyan
+Write-Host 'The previous hardcoded hostname did not resolve. Do not assume it is the right project.'
+Write-Host 'Example: https://abcdefghijklmnopqrst.supabase.co'
+$inputUrl=(Read-Host 'Paste the full Supabase Project URL').Trim().TrimEnd('/')
+$projectUrl=$inputUrl -replace '/rest/v1$',''
+if($projectUrl -cnotmatch '^https://[a-z0-9-]+\.supabase\.co$'){
+  throw 'Invalid Project URL. Copy the HTTPS URL ending in .supabase.co from Data API, not a dashboard URL.'
 }
-if (-not $isSecretKey) { throw 'The value must begin with sb_secret_. Use a Secret API key, not a Publishable or legacy key.' }
-$cred=[pscredential]::new('supabase_secret',$secret)
-$cred | Export-Clixml -LiteralPath $credFile -Force
-$cred=$null
-$secret=$null
+$hostName=([uri]$projectUrl).DnsSafeHost
+Write-Host "Checking DNS for $hostName ..."
+try{
+  $ips=[System.Net.Dns]::GetHostAddresses($hostName)
+  if(-not $ips -or $ips.Count -lt 1){throw 'No DNS addresses returned'}
+}catch{
+  $generalDnsOk=$false
+  try{
+    $publicDns=[System.Net.Dns]::GetHostAddresses('supabase.co')
+    $generalDnsOk=($null -ne $publicDns -and $publicDns.Count -gt 0)
+  }catch{$generalDnsOk=$false}
+  if($generalDnsOk){
+    throw "Cannot resolve $hostName. Check the copied URL, and whether this project is paused, deleted, or missing DNS records. No credentials changed."
+  }
+  throw "DNS resolution failed for both $hostName and supabase.co. Check your computer's network and DNS configuration. No credentials changed."
+}
+Write-Host "Supabase project hostname resolved: $hostName" -ForegroundColor Green
+$configFile=Join-Path $root 'supabase-bridge-config.json'
+$utf8=New-Object System.Text.UTF8Encoding($false)
+$configJson=([pscustomobject]@{supabase_url=$projectUrl}|ConvertTo-Json -Compress)
+[System.IO.File]::WriteAllText($configFile,$configJson,$utf8)
+Write-Host ''
+Write-Host 'Supabase Secret API key name: ofw_bridge (underscore).'
+Write-Host 'The key VALUE begins with sb_secret_. It is unrelated to the project hostname.'
+$needsKey=$ReplaceSecret -or -not (Test-Path -LiteralPath $credFile)
+if(-not $needsKey){
+  try{
+    $stored=Import-Clixml -LiteralPath $credFile
+    if(-not ($stored -is [System.Management.Automation.PSCredential])){throw 'Invalid saved credential'}
+    $ptr=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($stored.Password)
+    try{
+      $testValue=[Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+      $isValid=$testValue.StartsWith('sb_secret_')
+    }finally{
+      $testValue=$null
+      [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+    }
+    if(-not $isValid){$needsKey=$true}
+    $stored=$null
+  }catch{$needsKey=$true}
+}
+if($needsKey){
+  Write-Host 'Paste your Secret API key into the hidden prompt. Do not use a publishable or legacy key.'
+  $secret=Read-Host 'Supabase Secret API key, sb_secret_... (hidden)' -AsSecureString
+  if(-not $secret -or $secret.Length -lt 25){throw 'A Supabase Secret API key is required'}
+  $ptr=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret)
+  try{
+    $testValue=[Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+    $isValid=$testValue.StartsWith('sb_secret_')
+  }finally{
+    $testValue=$null
+    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+  }
+  if(-not $isValid){throw 'The key must start with sb_secret_'}
+  [pscredential]::new('supabase_secret',$secret) | Export-Clixml -LiteralPath $credFile -Force
+  $secret=$null
+}else{
+  Write-Host 'Reusing your already encrypted Supabase Secret API key.' -ForegroundColor Green
+}
 $launcherText=@'
 $ErrorActionPreference='Stop'
 $root=Join-Path $env:LOCALAPPDATA 'CoParentIntel\OFW'
@@ -47,7 +96,8 @@ $cred=Import-Clixml -LiteralPath (Join-Path $root 'supabase-bridge-key.xml')
 $p=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($cred.Password)
 try { $env:SUPABASE_SECRET_KEY=[Runtime.InteropServices.Marshal]::PtrToStringBSTR($p) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($p) }
 Remove-Item Env:SUPABASE_SERVICE_ROLE_KEY -ErrorAction SilentlyContinue
-$env:SUPABASE_URL='https://nukdhsxnaonzsskmchov.supabase.co'
+$config=Get-Content -LiteralPath (Join-Path $root 'supabase-bridge-config.json') -Raw | ConvertFrom-Json
+$env:SUPABASE_URL=$config.supabase_url
 $env:OFW_BRIDGE_BUCKET='ofw-bridge'
 $ofwCred=Import-Clixml -LiteralPath (Join-Path $root 'ofw-credential.xml')
 $env:OFW_USERNAME=$ofwCred.UserName
