@@ -67,7 +67,7 @@ On successful export, look in your project Supabase Dashboard -> Storage -> `ofw
 | `OFW_BRIDGE_BUCKET` | `ofw-bridge` (private) |
 | `OFW_MCP_ENTRY` | Existing pinned local `ofw-mcp` Node entry point (OFW credentials are decrypted from the original Windows DPAPI file) |
 
-The bridge starts the third-party OFW MCP directly as a Node child process, preserving JSON and Unicode over stdio. It never passes the Supabase Secret API key to that child process. For Supabase Storage requests, it sends the key in both the `apikey` header and the required `Authorization: Bearer` header, matching the documented `@supabase/storage-js` backend example; this is specific to Storage endpoints and may differ from Edge Function rules. That key is high privilege: keep it only on your trusted Windows machine, do not expose it in client code or environment variables committed to GitHub.
+The bridge starts the third-party OFW MCP directly as a Node child process, preserving JSON and Unicode over stdio. It never passes the Supabase Secret API key to that child process. The bridge sends the `sb_secret_...` key in the `apikey` HTTP header only. Never pass an opaque Secret API key in `Authorization: Bearer`: it is not a JWT. The bridge first checks the key against the actual project's `/rest/v1/` gateway before attempting Storage. That key is high privilege: keep it only on your trusted Windows machine, do not expose it in client code or environment variables committed to GitHub.
 
 ### Allowed operations
 
@@ -92,7 +92,13 @@ If the hostname does not resolve, compare the exact Project URL, verify that Sup
 
 ### Storage authentication: missing authorization header
 
-If a bridge connection probe fails with `400` and `headers must have required property 'authorization'`, use the current `bridge.mjs`. The direct Storage API enforces that header, even though Supabase's general Secret API-key guidance advises `apikey` only for other services. The bridge now supplies both as documented by the Storage SDK. The project URL remains the root `https://<project-ref>.supabase.co` (omit `/rest/v1/`).
+A previous bridge version incorrectly added `Authorization: Bearer sb_secret_...` to appease a Storage validation error. That fails with `Invalid Compact JWS`: `sb_secret_` keys are NOT JWTs. The current bridge uses `apikey` only, and validates the key against the actual Supabase project's `/rest/v1/` endpoint before calling Storage.
+
+- `PROJECT_KEY_MISMATCH` or an API-key verification 401/403: the saved key is not accepted by this project. Verify the key was created under the same project URL, and rerun the Windows installer with `-ReplaceSecret` to save that project's `sb_secret_` value.
+- `STORAGE_AUTH_INCOMPATIBLE`: the key was accepted by the Data API, but Storage still requires a JWT `Authorization` header. Do not supply `sb_secret_` as a bearer JWT or rotate keys blindly; this points to a project gateway/Storage compatibility issue requiring further investigation with Supabase support or a supported server-side approach.
+- A successful `probe` must verify OFW authentication, Data API key acceptance, and private Storage access. Only then perform a `sync`.
+
+The Project URL is the root `https://<project-ref>.supabase.co`; omit `/rest/v1/`.
 
 To refresh only the bridge script and rerun the probe **without reentering the secret or resetting the URL**, use this one-line PowerShell command:
 
