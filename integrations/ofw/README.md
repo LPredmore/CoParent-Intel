@@ -45,12 +45,12 @@ The working Claude Desktop OFW MCP remains the source connector. The bridge is a
 
 ### One-time bridge setup
 
-1. Open https://supabase.com/dashboard/project/nukdhsxnaonzsskmchov/settings/api-keys, select **Publishable and secret API keys**, and create a dedicated **Secret API key** named `ofw-bridge`. Copy the `sb_secret_...` value. Do not use the `sb_publishable_...` key or a legacy `service_role` key, and never paste the secret into chat.
+1. Open the **correct, active Supabase project** in https://supabase.com/dashboard. In **Project Settings > Data API**, copy its **Project URL**, in the form `https://<project-ref>.supabase.co`. Check that the project is running (not paused). Then, in the same project's **Project Settings > API Keys > Publishable and secret API keys**, create a dedicated **Secret API key** named `ofw_bridge` (underscore, not hyphen) if you haven't already. Copy its `sb_secret_...` value; never paste the key in chat.
 2. Run this ONE physical line in Windows PowerShell:
 
     $p=Join-Path $env:TEMP 'setup-ofw-bridge.ps1'; Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/LPredmore/CoParent-Intel/main/integrations/ofw/setup-bridge.ps1' -OutFile $p; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p
 
-3. Enter that `sb_secret_...` key at the **hidden** Windows secure prompt. It is encrypted locally with Windows DPAPI at `%LOCALAPPDATA%\CoParentIntel\OFW\supabase-bridge-key.xml` and never stored in GitHub.
+3. The installer asks for the verified **Project URL**, checks its DNS record, and reuses a previously encrypted `sb_secret_...` key if one is already installed. Otherwise, enter the Secret API key at the **hidden** Windows secure prompt. The key is encrypted locally with Windows DPAPI at `%LOCALAPPDATA%\CoParentIntel\OFW\supabase-bridge-key.xml`; it is not stored in GitHub. To replace a previously saved key, rerun the script with `-ReplaceSecret`.
 4. Setup executes `probe` (OFW login health and Supabase key check). The private bucket may show `storageBucketReady:false` until the first sync creates it.
 5. After the probe, run the following one-line command to perform the initial export:
 
@@ -62,7 +62,7 @@ On successful export, look in your project Supabase Dashboard -> Storage -> `ofw
 
 | Variable | Source |
 | --- | --- |
-| `SUPABASE_URL` | `https://nukdhsxnaonzsskmchov.supabase.co` (set by launcher) |
+| `SUPABASE_URL` | Actual Project URL copied from Supabase Dashboard, saved in `%LOCALAPPDATA%\CoParentIntel\OFW\supabase-bridge-config.json` (not hardcoded) |
 | `SUPABASE_SECRET_KEY` | New opaque `sb_secret_...` value, decrypted locally from Windows credential file by launcher |
 | `OFW_BRIDGE_BUCKET` | `ofw-bridge` (private) |
 | `OFW_MCP_ENTRY` | Existing pinned local `ofw-mcp` Node entry point (OFW credentials are decrypted from the original Windows DPAPI file) |
@@ -83,3 +83,9 @@ Example draft-request JSON fields: `requestId` (unique 8-100 character alphanume
 - The draft command is callable by a trusted local process. A Supabase queue consumer or automatic processing schedule is NOT installed; those require app workflow integration.
 - This bridge runs locally and is not a remotely hosted service. The user's PC must be on for exports. No Windows Scheduled Task is created.
 - The local MCP was verified by the user. This bridge code has been syntax-checked, but the Supabase bridge itself needs the local Windows setup, project key, and a real `probe`/`sync` run before production operation is confirmed.
+
+### Diagnosing an `ENOTFOUND` Supabase hostname error
+
+An `ENOTFOUND <project-ref>.supabase.co` error happens before the API key can be authenticated. The original installer mistakenly hardcoded the project URL from old application code. The new setup validates the URL you copy from the Supabase dashboard and checks DNS *before* attempting authentication. A key label such as `ofw_bridge` is unrelated to that hostname.
+
+If the hostname does not resolve, compare the exact Project URL, verify that Supabase reports the project as active (not paused), and test your local DNS. If only this hostname fails despite a correct active project, contact Supabase support; if every Supabase hostname fails, check your computer or network DNS settings. Do not rotate the Secret API key to fix DNS errors.
