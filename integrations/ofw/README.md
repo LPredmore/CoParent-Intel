@@ -45,12 +45,12 @@ The working Claude Desktop OFW MCP remains the source connector. The bridge is a
 
 ### One-time bridge setup
 
-1. Open https://supabase.com/dashboard/project/nukdhsxnaonzsskmchov/settings/api-keys and copy the **legacy service_role** secret key. Do not copy the anon/publishable key and never paste the secret in chat.
+1. Open https://supabase.com/dashboard/project/nukdhsxnaonzsskmchov/settings/api-keys, select **Publishable and secret API keys**, and create a dedicated **Secret API key** named `ofw-bridge`. Copy the `sb_secret_...` value. Do not use the `sb_publishable_...` key or a legacy `service_role` key, and never paste the secret into chat.
 2. Run this ONE physical line in Windows PowerShell:
 
     $p=Join-Path $env:TEMP 'setup-ofw-bridge.ps1'; Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/LPredmore/CoParent-Intel/main/integrations/ofw/setup-bridge.ps1' -OutFile $p; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p
 
-3. Enter that service_role key at the **hidden** Windows secure prompt. It is encrypted locally with Windows DPAPI at `%LOCALAPPDATA%\CoParentIntel\OFW\supabase-bridge-key.xml` and never stored in GitHub.
+3. Enter that `sb_secret_...` key at the **hidden** Windows secure prompt. It is encrypted locally with Windows DPAPI at `%LOCALAPPDATA%\CoParentIntel\OFW\supabase-bridge-key.xml` and never stored in GitHub.
 4. Setup executes `probe` (OFW login health and Supabase key check). The private bucket may show `storageBucketReady:false` until the first sync creates it.
 5. After the probe, run the following one-line command to perform the initial export:
 
@@ -63,11 +63,11 @@ On successful export, look in your project Supabase Dashboard -> Storage -> `ofw
 | Variable | Source |
 | --- | --- |
 | `SUPABASE_URL` | `https://nukdhsxnaonzsskmchov.supabase.co` (set by launcher) |
-| `SUPABASE_SERVICE_ROLE_KEY` | Decrypted locally from Windows credential file by launcher |
+| `SUPABASE_SECRET_KEY` | New opaque `sb_secret_...` value, decrypted locally from Windows credential file by launcher |
 | `OFW_BRIDGE_BUCKET` | `ofw-bridge` (private) |
 | `OFW_MCP_ENTRY` | Existing pinned local `ofw-mcp` Node entry point (OFW credentials are decrypted from the original Windows DPAPI file) |
 
-The bridge starts the third-party OFW MCP directly as a Node child process, preserving JSON and Unicode over stdio. It never passes the Supabase service-role key to that child process. That key is high privilege: keep it only on your trusted Windows machine, do not expose it in client code or environment variables committed to GitHub.
+The bridge starts the third-party OFW MCP directly as a Node child process, preserving JSON and Unicode over stdio. It never passes the Supabase Secret API key to that child process. The bridge sends it to Supabase only in the `apikey` HTTP header (never as an `Authorization: Bearer` JWT). That key is high privilege: keep it only on your trusted Windows machine, do not expose it in client code or environment variables committed to GitHub.
 
 ### Allowed operations
 
