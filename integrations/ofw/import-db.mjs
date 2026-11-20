@@ -209,13 +209,13 @@ async function importFolders(mcp,db,account,runId,stats) {
     stats[folder]=total;
   }
 }
-async function importDrafts(mcp,db,account,runId,stats){
+async function importDrafts(mcp,db,account,runId,stats,{skipLiveVerification=false}={}){
   let page=1,total=null,count=0;
   stats.draftsVerified=true;
   while(true){
     let r;
     try {
-      r=await mcp.call('ofw_list_drafts',{page,size:PAGE,view:'compact',verify:page===1,autoRefresh:false});
+      r=await mcp.call('ofw_list_drafts',{page,size:PAGE,view:'compact',verify:page===1 && !skipLiveVerification,autoRefresh:false});
     } catch(e) {
       if(page!==1)throw e;
       stats.draftsVerified=false;
@@ -310,7 +310,7 @@ export async function importToDatabase({mcp,baseUrl,key,remainingOnly=false}) {
       await importFolders(mcp,db,account,runId,stats);
     }
     try {
-      await importDrafts(mcp,db,account,runId,stats);
+      await importDrafts(mcp,db,account,runId,stats,{skipLiveVerification:remainingOnly});
     } catch(e) {
       stats.draftsVerified=false;
       stats.draftsError=String(e?.message||e).slice(0,300);
