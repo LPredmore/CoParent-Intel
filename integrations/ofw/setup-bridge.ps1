@@ -16,11 +16,14 @@ $ver = (& $node.Source --version).TrimStart('v')
 if ([version]$ver -lt [version]'22.5.0') {throw "Node.js $ver is too old; install Node 22.5+"}
 New-Item -Path $root -ItemType Directory -Force | Out-Null
 $bridgeSource='https://raw.githubusercontent.com/LPredmore/CoParent-Intel/main/integrations/ofw/bridge.mjs'
+$importSource='https://raw.githubusercontent.com/LPredmore/CoParent-Intel/main/integrations/ofw/import-db.mjs'
 $bridge=Join-Path $root 'bridge.mjs'
+$importModule=Join-Path $root 'import-db.mjs'
 $credFile=Join-Path $root 'supabase-bridge-key.xml'
 $launch=Join-Path $root 'Start-OFWBridge.ps1'
 Invoke-WebRequest -UseBasicParsing $bridgeSource -OutFile $bridge
-if (-not (Test-Path $bridge)) { throw 'Bridge download failed' }
+Invoke-WebRequest -UseBasicParsing $importSource -OutFile $importModule
+if (-not (Test-Path $bridge) -or -not (Test-Path $importModule)) { throw 'Bridge or importer download failed' }
 Write-Host ''
 Write-Host 'Copy the actual Project URL from Supabase Dashboard > Integrations > Data API (or the project Connect dialog).' -ForegroundColor Cyan
 Write-Host 'The previous hardcoded hostname did not resolve. Do not assume it is the right project.'
