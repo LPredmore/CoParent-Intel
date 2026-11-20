@@ -65,6 +65,29 @@ function objectUrl(baseUrl,account,id,hash){
   const url=new URL('/storage/v1/object/ofw-bridge/'+path,baseUrl);
   return {url,path};
 }
+async function verifyPrivateBinaryStorage({baseUrl,key}) {
+  // Use a fixed harmless object under _checks; never transmit OFW content in the preflight.
+  const data=new TextEncoder().encode('coparent-intel-ofw-private-storage-binary-check-v1');
+  const path='/storage/v1/object/ofw-bridge/_checks/binary-upload-check.bin';
+  const headers={
+    apikey:key,Authorization:'Bearer '+key,
+    'User-Agent':'CoParentIntel-OFWBridge/1.0 (trusted local backend)',
+  };
+  const upload=await fetch(new URL(path,baseUrl),{
+    method:'POST',
+    headers:{...headers,'Content-Type':'application/octet-stream','x-upsert':'true'},
+    body:data,signal:AbortSignal.timeout(30000)
+  });
+  if(!upload.ok)throw new Error('Private Storage binary preflight upload HTTP '+upload.status+'; aborting before contacting OFW for attachments.');
+  const download=await fetch(new URL(path.replace('/object/','/object/authenticated/'),baseUrl),{
+    headers,signal:AbortSignal.timeout(30000)
+  });
+  if(!download.ok)throw new Error('Private Storage binary preflight download HTTP '+download.status+'; aborting before contacting OFW for attachments.');
+  const actual=new Uint8Array(await download.arrayBuffer());
+  if(digest(actual)!==digest(data))throw new Error('Private Storage binary preflight returned different bytes; aborting before OFW attachment downloads.');
+  console.log('Private Storage binary write/read verified; starting OFW file archive.');
+}
+
 async function archiveFile({mcp,db,account,baseUrl,key,id,stats}) {
   const existing=await stored(db,account,id);
   if(existing){stats.alreadyArchived++;return;}
@@ -100,6 +123,7 @@ export async function archiveAttachments({mcp,baseUrl,key,ensureBucket}) {
   const db=makeClient(baseUrl,key);
   const bucket=await ensureBucket(true);
   if(bucket.public!==false)throw new Error('The OFW Storage bucket is not private; refusing uploads.');
+  await verifyPrivateBinaryStorage({baseUrl,key});
   const [messages,expenses]=await Promise.all([allMessageCandidates(db,account),allReceiptLinks(db,account)]);
   const ids=new Set();
   const stats={attachmentBearingMessages:messages.length,expenseReceiptReferences:expenses.length,archived:0,alreadyArchived:0,bytes:0,unreadSkipped:0,metadataMissing:0,failed:0,errors:[]};
