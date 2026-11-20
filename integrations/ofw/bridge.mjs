@@ -107,6 +107,7 @@ async function diagnoseSupabaseEndpoint(label, pathname) {
   const target = URL_BASE + pathname;
   const headers = {
     apikey: KEY,
+    ...(pathname.startsWith('/storage/v1/') ? { Authorization: 'Bearer ' + KEY } : {}),
     Accept: 'application/json',
     'User-Agent': 'CoParentIntel-OFWBridge/0.2 (Node.js backend)',
   };
@@ -177,9 +178,10 @@ async function verifyProjectSecret() {
 
 async function storage(path, method='GET',body,extra={}) {
   const url = URL_BASE+'/storage/v1/'+path.split('/').map(x=>encodeURIComponent(x)).join('/');
-  // sb_secret_... is an opaque API key, not a JWT. Never send it in
-  // Authorization: Bearer; current Supabase docs require apikey only.
-  const headers = { apikey: KEY, ...extra };
+  // The official supabase-js client sends apikey and Authorization: Bearer
+  // fallback for Storage. Its gateway handles an sb_secret_ key; do not
+  // interpret the opaque string as a locally signed JWT.
+  const headers = { apikey: KEY, Authorization: 'Bearer ' + KEY, ...extra };
   if (body !== undefined) headers['Content-Type']='application/json';
   let res;
   try {
@@ -196,10 +198,10 @@ async function storage(path, method='GET',body,extra={}) {
   if (!res.ok) {
     const msg = String(val?.message || val?.error || '');
     if (/headers must have required property ['"]authorization['"]/i.test(msg)) {
-      throw new Error('STORAGE_AUTH_INCOMPATIBLE: Supabase accepted the project key on the Data API, but Storage requires a JWT Authorization header. The sb_secret_ key cannot be used as a JWT. Do not retry Bearer sb_secret_ or switch to a legacy key; stop and report this Storage compatibility error.');
+      throw new Error('STORAGE_MISSING_AUTH_HEADER: Storage requires Authorization, but the bridge supplied it. Check for proxy/header stripping; report request ID and status.');
     }
     if (/Invalid Compact JWS|Invalid JWT/i.test(msg)) {
-      throw new Error('STORAGE_JWT_REJECTED: Supabase Storage attempted to validate an invalid JWT. This bridge sends the secret key in apikey only; check for upstream gateway configuration issues.');
+      throw new Error('STORAGE_AUTH_INVALID_JWS: Storage rejected bearer auth. Verify the encrypted key exactly matches the key that returns HTTP 200 from /rest/v1/ before investigating gateway translation.');
     }
     const e=new Error('Supabase Storage '+method+' '+res.status+' '+JSON.stringify(val).slice(0,500));
     e.status=res.status;throw e;
