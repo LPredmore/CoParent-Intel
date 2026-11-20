@@ -41,7 +41,7 @@ The upstream project is unofficial and AI-developed and has not received a human
 
 ## Optional independent Supabase Storage bridge
 
-The working Claude Desktop OFW MCP remains the source connector. The bridge is a separate local Node process that calls the same restricted MCP. It does not touch CoParent-Intel application code, existing Supabase tables, RLS, or OpenRouter. It exports JSON records into a NEW private Supabase Storage bucket named `ofw-bridge`.
+The working Claude Desktop OFW MCP remains the source connector. The bridge is a separate local Node process that calls the restricted MCP. Its legacy `sync` command exports JSON snapshots to private Storage; the `import-db` and related commands populate dedicated private `ofw_` tables, without modifying the current Lovable-backed application. Binary attachments are archived into a private bucket named `ofw-bridge`.
 
 ### One-time bridge setup
 
@@ -80,7 +80,7 @@ Example draft-request JSON fields: `requestId` (unique 8-100 character alphanume
 
 ### Important limits
 
-- The bridge stores raw export JSON in private Supabase Storage. It does NOT directly insert records in the app's existing tables or connect to Google Calendar; the app's owner will handle ingestion and application features separately.
+- The legacy `sync` command stores raw JSON exports in private Storage. The separate `import-db`/`import-remaining` commands populate private OFW staging tables, and `archive-attachments` saves original files in the private Storage bucket. None of these commands modifies the existing Lovable app database.
 - The draft command is callable by a trusted local process. A Supabase queue consumer or automatic processing schedule is NOT installed; those require app workflow integration.
 - This bridge runs locally and is not a remotely hosted service. The user's PC must be on for exports. No Windows Scheduled Task is created.
 - The local MCP was verified by the user. This bridge code has been syntax-checked, but the Supabase bridge itself needs the local Windows setup, project key, and a real `probe`/`sync` run before production operation is confirmed.
@@ -141,28 +141,29 @@ Copy-paste one-line PowerShell for the repair:
 
 After `REPAIRED` / `HTTP 200`, download the newest `bridge.mjs` and execute the existing launcher `probe`. Do not run `sync` until the read-only probe confirms Data API and Storage both pass.
 
-## Structured database import (November 20, 2026)
+## OFW structured import: messages, calendar, expenses, attachments (November 20, 2026)
 
-The destination project is **Co-Parent Connect** (`zhnpbajmumsbejyoqysr`). The database has **seven** separate, private RLS-enabled OFW tables. The main `messages` and `conversations` tables in the Lovable-backed app are untouched. The installer now downloads `import-db.mjs` alongside `bridge.mjs`, and the `import-db` bridge command loads that module.
+**Project:** Co-Parent Connect (\`zhnpbajmumsbejyoqysr\`). The private database tables have RLS enabled and are not exposed to ordinary browser users. This DOES NOT modify the existing Lovable app database.
 
-After the read-only `probe` returns HTTP 200 from Data API and Storage, run this **one physical line** in Windows PowerShell to download the current importer and execute the one-time database transfer:
+**No imported drafts.** The historical \`ofw_drafts\` mirror table was empty and is removed. Neither the \`import-db\` nor \`import-remaining\` commands calls \`ofw_list_drafts\`. Only Inbox, Sent, calendar, and expenses enter the database. The separate \`draft <path-to-json>\` command can explicitly create a draft in OFW. Its private Storage idempotency receipt stores the request ID and OFW IDs, never body/subject/recipient text. Existing OFW drafts are not downloaded. The app does not yet implement post-send receipt cleanup or an automatic outbound-draft queue.
 
-    $ErrorActionPreference='Stop'; $b=Join-Path $env:LOCALAPPDATA 'CoParentIntel\OFW'; Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/LPredmore/CoParent-Intel/main/integrations/ofw/import-db.mjs' -OutFile (Join-Path $b 'import-db.mjs'); Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/LPredmore/CoParent-Intel/main/integrations/ofw/bridge.mjs' -OutFile (Join-Path $b 'bridge.mjs'); powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $b 'Start-OFWBridge.ps1') import-db
+**Expenses:** \`ofw_list_expenses\` is read paginated to completion, with categories and financial summary totals saved. Records and their original payloads are upserted by source expense ID into \`ofw_expenses\`; known receipt/file IDs go into \`ofw_expense_attachment_refs\`. No expenses are created, edited, reimbursed, or deleted on OFW. \`sync-expenses\` refreshes only expenses/categories/summary without rereading messages or calendar.
 
-Behavior: local OFW cache is refreshed using `ofw_sync_messages` with `fetchUnreadBodies:false`. The importer stops if historical backfill remains incomplete after bounded retries; it does not misrepresent a partial cache as a complete historical archive. Every Inbox/Sent message is inserted using the real OFW ID, with no duplicate insert on rerun. It preserves sender, timestamps, subject, nullable body (unread bodies intentionally withheld), recipient view provenance, thread IDs, attachments count, and original JSON. No message is sent or marked read. Drafts are verified before upload and stored separately in `ofw_drafts`. Full OFW detailed calendar responses, including custody `guardianData` when provided, are stored for each quarter from January 2010 through December of next year in `ofw_calendar_snapshots`, alongside parsed entries in `ofw_calendar_items`. The import is audited in `ofw_import_runs`. Only source-provided attachment file IDs appear in `ofw_attachment_refs`; compact message lists usually expose only counts. Actual attachment files and bodies of unopened unread messages are **not** downloaded.
+**Attachments:** \`archive-attachments\` loads metadata from existing attachment-bearing messages and receipt references. It calls \`ofw_get_message(allowMarkRead:false)\` ONLY on messages that the saved database already identifies as read or sent. Unread inbox messages are skipped. Downloads use \`ofw_download_attachment\` to the OFW MCP's configured local attachment directory, then the bridge securely uploads original bytes to the new **private** \`ofw-bridge\` Supabase Storage bucket. File records in \`ofw_saved_files\` carry the file ID, size, SHA-256, content-type, and Storage path. Duplicate file IDs are not uploaded again. Currently standard uploads cap each file at 45 MiB; larger files need a resumable-upload implementation. The same file can be referenced from messages and expenses; it is stored once. Some expense receipt IDs might not be present in the expense list responses; the original OFW JSON remains available for future parser enrichment. A final \`ok:false\` means some files are still missing and is intentionally not a full-completeness claim.
 
-The importer compares the source-scoped stored message count to Inbox + Sent totals before marking a run completed. A failure marks the audit `partial` and exits with an error. Existing message rows are never replaced with weaker snapshots on rerun (duplicate IDs are ignored); drafts and calendar snapshots are mutable. Imports are **not automatically scheduled** and do not change the Lovable application or create browser access policies. This is a one-time, intentional transfer of family/court records to the private project and should only run from the user's trusted Windows account. Current code has passed simulated tests; actual source import still requires the local executable.
+**First import:** On November 20, 2026, the first live attempt imported **5,977** unique message records (Inbox 2,932; Sent 3,045) and **5,978** message-recipient records. It stopped on draft verification; the new code removes that step entirely. Supabase verified the message counts and no duplicate IDs.
 
+**On Windows PowerShell, use one physical line to refresh ALL four local module files and resume from the already verified messages** (no re-upload of those 5,977 messages unless source folder counts have changed):
 
+    $ErrorActionPreference='Stop'; $b=Join-Path $env:LOCALAPPDATA 'CoParentIntel\OFW'; @('import-db.mjs','expense-import.mjs','attachment-import.mjs','bridge.mjs') | ForEach-Object { Invoke-WebRequest -UseBasicParsing ('https://raw.githubusercontent.com/LPredmore/CoParent-Intel/main/integrations/ofw/'+$_) -OutFile (Join-Path $b $_) }; powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $b 'Start-OFWBridge.ps1') import-remaining
 
-### Recovery after partial import (2026-11-20)
+After successful \`import-remaining\` and a real audit of imported expense records, archive file content using the already refreshed modules:
 
-The first live import confirmed 2,932 Inbox and 3,045 Sent messages (5,977 unique source IDs), with 5,978 recipient rows in Supabase. Import then stopped because `ofw_list_drafts` returned `serverConfirmed:false`. The import audit correctly records `partial`. The database held 0 drafts and 0 calendar snapshots when inspected.
+    $b=Join-Path $env:LOCALAPPDATA 'CoParentIntel\OFW'; powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $b 'Start-OFWBridge.ps1') archive-attachments
 
-The `import-remaining` bridge command now confirms the stored per-folder message counts equal the current OFW source counts before **skipping redundant message upload**. If either count differs, it halts and instructs a full `import-db` rerun. It then reads drafts from the cache without repeating the failed live verification step, stores them with their actual per-record `server_confirmed` flag, and continues through calendar snapshots. An unverified draft set deliberately leaves the audit at `partial` — it is not proof those drafts still exist on OFW. No messages are sent, marked read, or deleted.
+For future expense updates (manual, not an automatic background schedule):
 
-Run one physical PowerShell line:
+    $b=Join-Path $env:LOCALAPPDATA 'CoParentIntel\OFW'; powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $b 'Start-OFWBridge.ps1') sync-expenses
 
-    $ErrorActionPreference='Stop'; $b=Join-Path $env:LOCALAPPDATA 'CoParentIntel\OFW'; Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/LPredmore/CoParent-Intel/main/integrations/ofw/import-db.mjs' -OutFile (Join-Path $b 'import-db.mjs'); Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/LPredmore/CoParent-Intel/main/integrations/ofw/bridge.mjs' -OutFile (Join-Path $b 'bridge.mjs'); powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $b 'Start-OFWBridge.ps1') import-remaining
+The bridge can still run its earlier \`sync\` command to create legacy raw Storage JSON snapshots. That is **separate** from the private database importer. There is no scheduled or always-on sync configured. An automation can be added after the first full data/attachment reconciliation. Never run import code with the Secret API key in frontend/browser code.
 
-The import still **does not download attachment file contents**. Initial audit found 226 message rows reporting one or more attachments, but zero `ofw_attachment_refs` rows, because the compact message listing exposes attachment counts but not file IDs. These attachments need a separate, deliberately guarded enrichment/download workflow. No actual local recovery import has been run or verified yet.
