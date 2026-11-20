@@ -213,7 +213,15 @@ async function importDrafts(mcp,db,account,runId,stats){
   let page=1,total=null,count=0;
   stats.draftsVerified=true;
   while(true){
-    const r=await mcp.call('ofw_list_drafts',{page,size:PAGE,view:'compact',verify:page===1,autoRefresh:false});
+    let r;
+    try {
+      r=await mcp.call('ofw_list_drafts',{page,size:PAGE,view:'compact',verify:page===1,autoRefresh:false});
+    } catch(e) {
+      if(page!==1)throw e;
+      stats.draftsVerified=false;
+      console.warn('Live OFW draft verification failed; attempting cache-only recovery.');
+      r=await mcp.call('ofw_list_drafts',{page,size:PAGE,view:'compact',verify:false,autoRefresh:false});
+    }
     if(!Number.isInteger(r?.total)||r.total<0||!Array.isArray(r.drafts))throw new Error('Unrecognized OFW drafts response');
     if(r.serverConfirmed!==true) {
       stats.draftsVerified=false;
