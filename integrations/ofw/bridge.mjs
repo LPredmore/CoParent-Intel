@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
+import { importToDatabase } from './import-db.mjs';
 
 const URL_BASE = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
 const KEY = process.env.SUPABASE_SECRET_KEY || '';
@@ -79,7 +80,7 @@ class Mcp {
     this.child.stdin.write(JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})+'\n');
     const capabilities = await this.send('tools/list',{});
     const names = new Set((capabilities.tools||[]).map(t=>t.name));
-    for (const t of ['ofw_healthcheck','ofw_sync_messages','ofw_list_messages','ofw_list_events','ofw_save_draft']) {
+    for (const t of ['ofw_healthcheck','ofw_sync_messages','ofw_list_messages','ofw_list_events','ofw_list_drafts','ofw_save_draft']) {
       if (!names.has(t)) throw new Error('OFW tool unavailable: '+t+' (check pinned MCP installation)');
     }
   }
@@ -331,7 +332,8 @@ try {
   await mcp.init();
   if(command==='probe') await diagnosticProbe(mcp);
   else if(command==='storage-test') await storageTest();
+  else if(command==='import-db') await importToDatabase({mcp,baseUrl:URL_BASE,key:KEY});
   else if(command==='sync') await sync(mcp);
   else if(command==='draft') await saveDraft(mcp,process.argv[3]);
-  else throw new Error('Usage: bridge.mjs probe | storage-test | sync | draft <file>');
+  else throw new Error('Usage: bridge.mjs probe | storage-test | import-db | sync | draft <file>');
 } finally { mcp.close(); }
