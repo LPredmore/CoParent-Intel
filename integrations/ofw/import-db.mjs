@@ -304,15 +304,19 @@ export async function importToDatabase({mcp,baseUrl,key}) {
     if(!match)throw new Error('Unable to verify PostgREST message count after insert.');
     const existing=Number(match[1]);
     if(existing<expected)throw new Error('Database contains only '+existing+' of '+expected+' expected OFW message IDs');
+    const draftsVerified=stats.draftsVerified===true && !stats.draftsError;
+    const importStatus=draftsVerified?'completed':'partial';
+    const problem=draftsVerified?null:(stats.draftsError||'Draft cache could not be verified against the OFW server; available cached drafts were preserved as unverified.');
     await db.call('ofw_import_runs',{
       method:'PATCH',params:{id:'eq.'+runId},
-      data:{status:'completed',completed_at:new Date().toISOString(),expected_messages:expected,imported_messages:stats.messages,
+      data:{status:importStatus,completed_at:new Date().toISOString(),expected_messages:expected,imported_messages:stats.messages,
+        error_count:draftsVerified?0:1,error_summary:problem,
         metadata:{...stats,source:SOURCE,mode:'initial-db-import',account,calendarFromYear:CALENDAR_START_YEAR,verifiedDatabaseMessageCount:existing,unreadBodiesFetched:false}},
       prefer:'return=minimal'
     });
-    console.log(JSON.stringify({ok:true,runId,project:'zhnpbajmumsbejyoqysr',stats,verifiedDatabaseMessageCount:existing,
+    console.log(JSON.stringify({ok:draftsVerified,status:importStatus,runId,project:'zhnpbajmumsbejyoqysr',stats,verifiedDatabaseMessageCount:existing,
       unreadMessagesOpened:false,ofwMessagesSent:false,lovableDatabaseTouched:false,
-      note:'Attachment file contents were not downloaded; raw metadata kept when exposed by OFW.'},null,2));
+      note:draftsVerified?'Database import completed; attachment file contents were not downloaded.':'Messages/calendar imported, but drafts could not be verified live. Cached drafts (if any) were retained without falsely claiming they are current.'},null,2));
   }catch(e){
     error=e;
     try{
