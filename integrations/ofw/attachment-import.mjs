@@ -108,7 +108,7 @@ export async function archiveAttachments({mcp,baseUrl,key,ensureBucket}) {
     if(row.folder==='inbox'&&row.read_status!==true){stats.unreadSkipped++;continue;}
     let detail;
     try{
-      detail=await mcp.call('ofw_get_message',{messageId:Number(row.source_message_id),allowMarkRead:false});
+      detail=await mcp.call('ofw_get_message',{messageId:String(row.source_message_id),allowMarkRead:false,view:'compact'});
       if(row.folder==='inbox'&&detail?.read===false){stats.unreadSkipped++;continue;}
       const listed=Array.isArray(detail?.attachments)?detail.attachments:[];
       if(!listed.length){stats.metadataMissing++;continue;}
