@@ -333,7 +333,8 @@ try {
   if(command==='probe') await diagnosticProbe(mcp);
   else if(command==='storage-test') await storageTest();
   else if(command==='import-db') await importToDatabase({mcp,baseUrl:URL_BASE,key:KEY});
+  else if(command==='import-remaining') await importToDatabase({mcp,baseUrl:URL_BASE,key:KEY,remainingOnly:true});
   else if(command==='sync') await sync(mcp);
   else if(command==='draft') await saveDraft(mcp,process.argv[3]);
-  else throw new Error('Usage: bridge.mjs probe | storage-test | import-db | sync | draft <file>');
+  else throw new Error('Usage: bridge.mjs probe | storage-test | import-db | import-remaining | sync | draft <file>');
 } finally { mcp.close(); }
