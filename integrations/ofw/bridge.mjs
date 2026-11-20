@@ -225,6 +225,40 @@ async function put(rel,data) {
 async function get(rel) {
   return storage('object/authenticated/'+BUCKET+'/'+rel);
 }
+// Separate, tightly scoped Storage write test. Synthetic data only:
+ // one fixed healthcheck object in the NEW private bucket, no OFW messages.
+async function storageTest() {
+  await verifyProjectSecret();
+  const b = await ensureBucket(true);
+  if (b.public !== false) throw new Error('Storage-test aborted: bucket is not private');
+  const rel = '_checks/bridge-storage-test.json';
+  const nonce = randomUUID();
+  const value = {
+    purpose: 'coparent-intel-storage-connectivity-test',
+    nonce,
+    project: new URL(URL_BASE).hostname.split('.')[0],
+    createdAt: new Date().toISOString(),
+    synthetic: true,
+  };
+  await put(rel, value);
+  const readBack = await get(rel);
+  if (readBack?.nonce !== nonce || readBack?.purpose !== value.purpose || readBack?.synthetic !== true) {
+    throw new Error('Storage-test failed: the test object was uploaded but could not be read back identically. DO NOT run sync.');
+  }
+  console.log(JSON.stringify({
+    ok: true,
+    test: 'private-storage-round-trip',
+    project: value.project,
+    bucket: BUCKET,
+    private: b.public === false,
+    syntheticObject: rel,
+    writeVerified: true,
+    readVerified: true,
+    noOfwDataUploaded: true,
+    appTablesUnchanged: true,
+  }, null, 2));
+}
+
 async function probe(mcp) {
   const h=await mcp.call('ofw_healthcheck');
   const keyCheck = await verifyProjectSecret();
@@ -296,7 +330,8 @@ const mcp=new Mcp();
 try {
   await mcp.init();
   if(command==='probe') await diagnosticProbe(mcp);
+  else if(command==='storage-test') await storageTest();
   else if(command==='sync') await sync(mcp);
   else if(command==='draft') await saveDraft(mcp,process.argv[3]);
-  else throw new Error('Usage: bridge.mjs probe | sync | draft <file>');
+  else throw new Error('Usage: bridge.mjs probe | storage-test | sync | draft <file>');
 } finally { mcp.close(); }
