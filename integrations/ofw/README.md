@@ -72,6 +72,7 @@ The bridge starts the third-party OFW MCP directly as a Node child process, pres
 ### Allowed operations
 
 - `probe`: verify OFW authentication and Supabase access; no OFW mutation and no data upload.
+- `storage-test`: create or reuse the new **private** `ofw-bridge` bucket, upload and read back one harmless synthetic JSON test object (`_checks/bridge-storage-test.json`), and verify an exact round trip. Does not export OFW records or alter the app database. Run it once after the first successful probe, before a full sync.
 - `sync`: refresh the OFW cache (without opening unread inbox messages), export all Inbox/Sent records and 30 days past/180 days future detailed calendar to private Storage. This is a MANUAL operation until separately scheduled.
 - `draft <path-to-json>`: explicitly create an OFW draft (NEVER send); record a `draft-receipts/<requestId>.json` state in private Storage to avoid blind duplicate retries. Existing draft replacement is supported with optional `messageId` and `expectedRevision`, subject to upstream conflict controls. Do not execute this command until the app provides a trusted draft request. A failed request with a `started` receipt requires human reconciliation; it must not be retried blindly.
 
@@ -119,6 +120,14 @@ As of November 18, 2026, project `zhnpbajmumsbejyoqysr` is the intended empty de
 The `probe` command now independently attempts read-only GET requests to `/rest/v1/` and `/storage/v1/bucket`. It reports each HTTP status and sanitized error body instead of treating every 401 as an invalid key. It doesn't read application tables, write any objects, or mark OFW messages read. On either test failure, it returns a nonzero exit code so the installer does not claim the bridge is ready. Exact HTTP status alone is not sufficient to conclude an API key is invalid.
 
 To rotate only the bridge key without disturbing the existing one: open the target project's **Settings > API Keys > Publishable and secret API keys**, create a new Secret API key named `ofw_bridge_v2`, copy the `sb_secret_...` value, then run the installer with `-ReplaceSecret` and paste the actual project base URL. Do not delete the older key until the new one is verified, and never paste the secret in chat or commit it to GitHub. Run only `probe`, NOT `sync`, until reviewed.
+
+### First private Storage write/read verification
+
+After `probe` returns Data API 200 and Storage 200, run **one** synthetic write/read test before exporting private OFW records:
+
+    $b=Join-Path $env:LOCALAPPDATA 'CoParentIntel\OFW'; Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/LPredmore/CoParent-Intel/main/integrations/ofw/bridge.mjs' -OutFile (Join-Path $b 'bridge.mjs'); powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $b 'Start-OFWBridge.ps1') storage-test
+
+The command creates the private bucket if missing, writes the fixed synthetic `_checks/bridge-storage-test.json` object, reads it back, and confirms it has the same random nonce. It is a deliberately **non-OFW** write; no sensitive message or calendar content is exported. Do not perform `sync` unless `writeVerified` and `readVerified` are both true. The synthetic check object remains privately stored in the bucket.
 
 ### Verified root cause and one-time fix (November 20, 2026)
 
