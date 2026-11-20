@@ -24,7 +24,7 @@ function timestamp(v) {
   return Number.isFinite(n) ? new Date(n).toISOString() : null;
 }
 function sha(value) { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
-function sourceAccount() {
+export function sourceAccount() {
   const id = (process.env.OFW_USERNAME || '').trim().toLowerCase();
   if (!id) throw new Error('OFW_USERNAME missing; refusing import without a stable account identifier.');
   return 'ofw-' + sha(id).slice(0,24);
@@ -32,7 +32,7 @@ function sourceAccount() {
 function redact(error, key) {
   return String(error).replaceAll(key, '[REDACTED_KEY]').replace(/sb_secret_[A-Za-z0-9_-]+/g,'[REDACTED_KEY]').slice(0,600);
 }
-function makeClient(baseUrl, key) {
+export function makeClient(baseUrl, key) {
   if (new URL(baseUrl).hostname !== 'zhnpbajmumsbejyoqysr.supabase.co')
     throw new Error('Unexpected project URL. Refusing to import into a different Supabase project.');
   async function call(table, {method='GET',params={},data,prefer}={}) {
