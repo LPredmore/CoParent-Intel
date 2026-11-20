@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import { importToDatabase } from './import-db.mjs';
+import { importToDatabase, refreshExpensesOnly } from './import-db.mjs';
 import { archiveAttachments } from './attachment-import.mjs';
 
 const URL_BASE = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
@@ -344,7 +344,8 @@ try {
   else if(command==='import-db') await importToDatabase({mcp,baseUrl:URL_BASE,key:KEY});
   else if(command==='import-remaining') await importToDatabase({mcp,baseUrl:URL_BASE,key:KEY,remainingOnly:true});
   else if(command==='archive-attachments') await archiveAttachments({mcp,baseUrl:URL_BASE,key:KEY,ensureBucket});
+  else if(command==='sync-expenses') await refreshExpensesOnly({mcp,baseUrl:URL_BASE,key:KEY});
   else if(command==='sync') await sync(mcp);
   else if(command==='draft') await saveDraft(mcp,process.argv[3]);
-  else throw new Error('Usage: bridge.mjs probe | storage-test | import-db | import-remaining | archive-attachments | sync | draft <file>');
+  else throw new Error('Usage: bridge.mjs probe | storage-test | import-db | import-remaining | sync-expenses | archive-attachments | sync | draft <file>');
 } finally { mcp.close(); }
