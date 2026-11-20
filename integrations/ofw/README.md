@@ -167,3 +167,17 @@ For future expense updates (manual, not an automatic background schedule):
 
 The bridge can still run its earlier \`sync\` command to create legacy raw Storage JSON snapshots. That is **separate** from the private database importer. There is no scheduled or always-on sync configured. An automation can be added after the first full data/attachment reconciliation. Never run import code with the Secret API key in frontend/browser code.
 
+
+### Private bucket provisioned and receipt importer repaired (November 20, 2026)
+
+- Created Supabase Storage bucket `ofw-bridge` directly in project `zhnpbajmumsbejyoqysr`. Verified `public=false` and 47,185,920-byte per-file limit (45 MiB). No Storage object access policies were added for ordinary authenticated/anonymous users.
+- Fixed `ensureBucket` to recognize Supabase Storage's HTTP 400 `NoSuchBucket` error instead of expecting only HTTP 404.
+- Live expense data stores the monetary value at `amount.total`, and uses a top-level numeric `fileId` for receipts. The importer now handles both forms.
+- Repaired the existing 385 expense rows directly in Supabase: 385 have a structured amount and 278 have linked, valid receipt file IDs. The existing source JSON and 5,977 messages were preserved.
+- Verified the 72 calendar snapshot windows and 1,574 distinct calendar items (the earlier import's 1,593 source entries included 19 repeated identities).
+- Identified 226 messages with attachment counts totaling 338 message file references. This is separate from the 278 expense receipt references; some source file IDs may overlap.
+- The new private Storage bucket is empty pending a live binary upload by the Windows attachment archiver. Do not mark the archive complete until the live results and object counts are checked.
+
+To refresh the updated bridge and attachment archiver and resume ONLY binary attachments (do not rerun message/calendar/expense import):
+
+    $ErrorActionPreference='Stop'; $b=Join-Path $env:LOCALAPPDATA 'CoParentIntel\OFW'; @('bridge.mjs','attachment-import.mjs','expense-import.mjs') | ForEach-Object { Invoke-WebRequest -UseBasicParsing ('https://raw.githubusercontent.com/LPredmore/CoParent-Intel/main/integrations/ofw/'+$_) -OutFile (Join-Path $b $_) }; powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $b 'Start-OFWBridge.ps1') archive-attachments
