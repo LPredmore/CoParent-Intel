@@ -153,3 +153,16 @@ Behavior: local OFW cache is refreshed using `ofw_sync_messages` with `fetchUnre
 
 The importer compares the source-scoped stored message count to Inbox + Sent totals before marking a run completed. A failure marks the audit `partial` and exits with an error. Existing message rows are never replaced with weaker snapshots on rerun (duplicate IDs are ignored); drafts and calendar snapshots are mutable. Imports are **not automatically scheduled** and do not change the Lovable application or create browser access policies. This is a one-time, intentional transfer of family/court records to the private project and should only run from the user's trusted Windows account. Current code has passed simulated tests; actual source import still requires the local executable.
 
+
+
+### Recovery after partial import (2026-11-20)
+
+The first live import confirmed 2,932 Inbox and 3,045 Sent messages (5,977 unique source IDs), with 5,978 recipient rows in Supabase. Import then stopped because `ofw_list_drafts` returned `serverConfirmed:false`. The import audit correctly records `partial`. The database held 0 drafts and 0 calendar snapshots when inspected.
+
+The `import-remaining` bridge command now confirms the stored per-folder message counts equal the current OFW source counts before **skipping redundant message upload**. If either count differs, it halts and instructs a full `import-db` rerun. It then reads drafts from the cache without repeating the failed live verification step, stores them with their actual per-record `server_confirmed` flag, and continues through calendar snapshots. An unverified draft set deliberately leaves the audit at `partial` — it is not proof those drafts still exist on OFW. No messages are sent, marked read, or deleted.
+
+Run one physical PowerShell line:
+
+    $ErrorActionPreference='Stop'; $b=Join-Path $env:LOCALAPPDATA 'CoParentIntel\OFW'; Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/LPredmore/CoParent-Intel/main/integrations/ofw/import-db.mjs' -OutFile (Join-Path $b 'import-db.mjs'); Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/LPredmore/CoParent-Intel/main/integrations/ofw/bridge.mjs' -OutFile (Join-Path $b 'bridge.mjs'); powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $b 'Start-OFWBridge.ps1') import-remaining
+
+The import still **does not download attachment file contents**. Initial audit found 226 message rows reporting one or more attachments, but zero `ofw_attachment_refs` rows, because the compact message listing exposes attachment counts but not file IDs. These attachments need a separate, deliberately guarded enrichment/download workflow. No actual local recovery import has been run or verified yet.
