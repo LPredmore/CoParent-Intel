@@ -6,6 +6,7 @@ import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { importToDatabase } from './import-db.mjs';
+import { archiveAttachments } from './attachment-import.mjs';
 
 const URL_BASE = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
 const KEY = process.env.SUPABASE_SECRET_KEY || '';
@@ -80,7 +81,7 @@ class Mcp {
     this.child.stdin.write(JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})+'\n');
     const capabilities = await this.send('tools/list',{});
     const names = new Set((capabilities.tools||[]).map(t=>t.name));
-    for (const t of ['ofw_healthcheck','ofw_sync_messages','ofw_list_messages','ofw_list_events','ofw_list_drafts','ofw_save_draft']) {
+    for (const t of ['ofw_healthcheck','ofw_sync_messages','ofw_list_messages','ofw_list_events','ofw_save_draft']) {
       if (!names.has(t)) throw new Error('OFW tool unavailable: '+t+' (check pinned MCP installation)');
     }
   }
@@ -324,8 +325,16 @@ async function saveDraft(mcp,file) {
   const args={subject:item.subject,body:item.body};
   for(const field of ['messageId','replyToId','expectedRevision']) if(item[field]!==undefined)args[field]=item[field];
   const result=await mcp.call('ofw_save_draft',args);
-  await put(receipt,{status:'saved',at:new Date().toISOString(),requestId:item.requestId,result});
-  console.log(JSON.stringify({ok:true,requestId:item.requestId,receipt,result},null,2));
+  // Only keep an idempotency receipt, never persist draft body/subject/recipients.
+  // OFW retains the actual draft until it is sent or removed there.
+  const ofwDraftId=Number.isSafeInteger(result?.id)?result.id
+    :Number.isSafeInteger(result?.draft?.id)?result.draft.id
+    :Number.isSafeInteger(result?.messageId)?result.messageId:null;
+  const receiptMeta={status:'saved',at:new Date().toISOString(),requestId:item.requestId,
+    ofwDraftId,draftKey:typeof result?.draftKey==='string'?result.draftKey:null};
+  await put(receipt,receiptMeta);
+  console.log(JSON.stringify({ok:true,requestId:item.requestId,receipt,ofwDraftId,draftSavedToOfw:true,
+    storedDraftContent:false},null,2));
 }
 const mcp=new Mcp();
 try {
@@ -334,7 +343,8 @@ try {
   else if(command==='storage-test') await storageTest();
   else if(command==='import-db') await importToDatabase({mcp,baseUrl:URL_BASE,key:KEY});
   else if(command==='import-remaining') await importToDatabase({mcp,baseUrl:URL_BASE,key:KEY,remainingOnly:true});
+  else if(command==='archive-attachments') await archiveAttachments({mcp,baseUrl:URL_BASE,key:KEY,ensureBucket});
   else if(command==='sync') await sync(mcp);
   else if(command==='draft') await saveDraft(mcp,process.argv[3]);
-  else throw new Error('Usage: bridge.mjs probe | storage-test | import-db | import-remaining | sync | draft <file>');
+  else throw new Error('Usage: bridge.mjs probe | storage-test | import-db | import-remaining | archive-attachments | sync | draft <file>');
 } finally { mcp.close(); }
