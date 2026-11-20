@@ -13,15 +13,20 @@ function fileIds(item){
       if(n)out.add(n);
     }
   }
-  const single=posInt(item.receiptFileId);
-  if(single)out.add(single);
+  // Real OFW expense lists use a single top-level fileId for receipts.
+  // Older clients may expose receiptFileId or arrays instead.
+  for(const field of ['fileId','receiptFileId']){
+    const single=posInt(typeof item[field]==='number'?item[field]:record(item[field])?(item[field].fileId??item[field].id):null);
+    if(single)out.add(single);
+  }
   return [...out];
 }
 function toExpense(item,account,runId){
   if(!record(item))throw new Error('OFW expense response contains a non-object record');
   const id=posInt(item.id??item.expenseId);
   if(!id)throw new Error('OFW expense record missing a stable positive integer id. Import halted before silently dropping an expense.');
-  const amount=typeof item.amount==='number'?item.amount:null;
+  const amount=typeof item.amount==='number'?item.amount:
+    record(item.amount)&&typeof item.amount.total==='number'?item.amount.total:null;
   const money=amount!==null&&Number.isFinite(amount)&&amount>=0?amount:null;
   const cat=posInt(item.categoryId??item.category?.id);
   const payer=posInt(item.payerId??item.payer?.userId);
