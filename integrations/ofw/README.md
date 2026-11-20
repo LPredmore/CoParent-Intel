@@ -67,7 +67,7 @@ On successful export, look in your project Supabase Dashboard -> Storage -> `ofw
 | `OFW_BRIDGE_BUCKET` | `ofw-bridge` (private) |
 | `OFW_MCP_ENTRY` | Existing pinned local `ofw-mcp` Node entry point (OFW credentials are decrypted from the original Windows DPAPI file) |
 
-The bridge starts the third-party OFW MCP directly as a Node child process, preserving JSON and Unicode over stdio. It never passes the Supabase Secret API key to that child process. The bridge sends the `sb_secret_...` key in the `apikey` HTTP header only. Never pass an opaque Secret API key in `Authorization: Bearer`: it is not a JWT. The bridge first checks the key against the actual project's `/rest/v1/` gateway before attempting Storage. That key is high privilege: keep it only on your trusted Windows machine, do not expose it in client code or environment variables committed to GitHub.
+The bridge starts the third-party OFW MCP directly as a Node child process, preserving JSON and Unicode over stdio. It never passes the Supabase Secret API key to that child process. It sends the key as `apikey` to the Data API; to Storage it sends both `apikey` and `Authorization: Bearer <key>`, matching the current `supabase-js` Storage request wrapper. The gateway handles new opaque keys. The key is high privilege: keep it only on your trusted Windows machine, never in frontend code or committed to GitHub.
 
 ### Allowed operations
 
@@ -92,10 +92,10 @@ If the hostname does not resolve, compare the exact Project URL, verify that Sup
 
 ### Storage authentication: missing authorization header
 
-A previous bridge version incorrectly added `Authorization: Bearer sb_secret_...` to appease a Storage validation error. That fails with `Invalid Compact JWS`: `sb_secret_` keys are NOT JWTs. The current bridge uses `apikey` only, and validates the key against the actual Supabase project's `/rest/v1/` endpoint before calling Storage.
+A previous bridge version produced `Invalid Compact JWS` when it sent `Authorization: Bearer sb_secret_...` while the saved key was invalid. The November 20 direct comparison confirmed that the saved credential differed from a working Dashboard key. The current bridge uses the same two headers as `supabase-js` for Storage (`apikey` and `Authorization`) and independently tests the Data API with the key in `apikey`.
 
-- `PROJECT_KEY_REJECTED` or an API-key verification 401/403: the saved key is not accepted by this project. Verify the key was created under the same project URL, and rerun the Windows installer with `-ReplaceSecret` to save that project's `sb_secret_` value.
-- `STORAGE_AUTH_INCOMPATIBLE`: the key was accepted by the Data API, but Storage still requires a JWT `Authorization` header. Do not supply `sb_secret_` as a bearer JWT or rotate keys blindly; this points to a project gateway/Storage compatibility issue requiring further investigation with Supabase support or a supported server-side approach.
+- `PROJECT_KEY_REJECTED` or an API-key verification 401/403: the saved credential is not being accepted. Run `diagnose-supabase.ps1` to compare it with a freshly copied Dashboard value before drawing conclusions. The verified key can be safely saved with the `-RepairSavedKey` switch.
+- `STORAGE_MISSING_AUTH_HEADER` or `STORAGE_AUTH_INVALID_JWS`: the Storage header or gateway translation failed even after the key was verified. Report the exact sanitized error before running any import.
 - A successful `probe` must verify OFW authentication, Data API key acceptance, and private Storage access. Only then perform a `sync`.
 
 The Project URL is the root `https://<project-ref>.supabase.co`; omit `/rest/v1/`.
@@ -119,3 +119,15 @@ As of November 18, 2026, project `zhnpbajmumsbejyoqysr` is the intended empty de
 The `probe` command now independently attempts read-only GET requests to `/rest/v1/` and `/storage/v1/bucket`. It reports each HTTP status and sanitized error body instead of treating every 401 as an invalid key. It doesn't read application tables, write any objects, or mark OFW messages read. On either test failure, it returns a nonzero exit code so the installer does not claim the bridge is ready. Exact HTTP status alone is not sufficient to conclude an API key is invalid.
 
 To rotate only the bridge key without disturbing the existing one: open the target project's **Settings > API Keys > Publishable and secret API keys**, create a new Secret API key named `ofw_bridge_v2`, copy the `sb_secret_...` value, then run the installer with `-ReplaceSecret` and paste the actual project base URL. Do not delete the older key until the new one is verified, and never paste the secret in chat or commit it to GitHub. Run only `probe`, NOT `sync`, until reviewed.
+
+### Verified root cause and one-time fix (November 20, 2026)
+
+Direct read-only tests showed the current Supabase Dashboard Secret key returned HTTP 200, while the encrypted key installed by prior bridge runs returned HTTP 401. The values were **not identical**. This establishes a stale or incorrect locally saved credential, not a confirmed gateway outage. The cause of the discrepancy (older/rotated key versus prior input) remains unknown; the installer code itself has not been proven to corrupt it.
+
+The `diagnose-supabase.ps1 -RepairSavedKey` mode prompts once for the Dashboard key. It **only** overwrites the DPAPI-encrypted local bridge credential if the freshly supplied key first returns HTTP 200 from the correct project's `/rest/v1/` endpoint. It encrypts to a candidate file, checks the decrypt round-trip, moves the candidate over the old credential, and rechecks the saved value. It never uploads OFW data, changes Supabase records, or prints the key.
+
+Copy-paste one-line PowerShell for the repair:
+
+    $p=Join-Path $env:TEMP 'diagnose-supabase.ps1'; Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/LPredmore/CoParent-Intel/main/integrations/ofw/diagnose-supabase.ps1' -OutFile $p; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p -RepairSavedKey
+
+After `REPAIRED` / `HTTP 200`, download the newest `bridge.mjs` and execute the existing launcher `probe`. Do not run `sync` until the read-only probe confirms Data API and Storage both pass.
