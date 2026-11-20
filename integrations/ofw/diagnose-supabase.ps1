@@ -94,8 +94,10 @@ if ($RepairSavedKey) {
 }
 if ($match -and $results[0].Status -eq 401) {
  Write-Host 'STOP: Identical key rejected by a direct PowerShell request. No more bridge/key retries recommended.' -ForegroundColor Yellow
+} elseif ($RepairSavedKey -and $results[0].Status -eq 200) {
+ Write-Host 'SUCCESS: The Dashboard key worked and the local credential is now verified. Run the updated bridge probe (no export).' -ForegroundColor Green
 } elseif ($results[0].Status -ge 200 -and $results[0].Status -lt 300) {
- Write-Host 'SUCCESS: Direct API request works. Investigate saved credentials or Node request path as indicated above.' -ForegroundColor Green
+ Write-Host 'SUCCESS: Direct API request works. Use -RepairSavedKey to save the working Dashboard key if it differs.' -ForegroundColor Green
 } else {
  Write-Host 'STOP: Examine exact HTTP status above. No application data was changed.' -ForegroundColor Yellow
 }
