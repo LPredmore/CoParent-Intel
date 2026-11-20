@@ -270,7 +270,7 @@ async function importCalendar(mcp,db,account,runId,stats){
     if(stats.calendarWindows%8===0)console.log('Imported calendar windows '+stats.calendarWindows+' (through '+end+')');
   }
 }
-export async function importToDatabase({mcp,baseUrl,key}) {
+export async function importToDatabase({mcp,baseUrl,key,remainingOnly=false}) {
   const account=sourceAccount();
   const db=makeClient(baseUrl,key);
   // Ensure the new target schema is installed BEFORE reading any source data.
@@ -292,7 +292,23 @@ export async function importToDatabase({mcp,baseUrl,key}) {
   const stats={messages:0,inbox:0,sent:0,drafts:0,recipients:0,attachmentRefs:0,calendarItems:0,calendarWindows:0,draftsVerified:true};
   let error=null;
   try{
-    await importFolders(mcp,db,account,runId,stats);
+    if(remainingOnly) {
+      for(const folder of ['inbox','sent']){
+        const source=await mcp.call('ofw_list_messages',{folderId:folder,page:1,size:1,view:'compact',autoRefresh:false});
+        if(!Number.isSafeInteger(source?.total)||source.total<0) throw new Error('Invalid source count for '+folder);
+        const dbCount=await db.call('ofw_messages',{method:'HEAD',
+          params:{select:'source_message_id',source_account:'eq.'+account,folder:'eq.'+folder},
+          prefer:'count=exact'});
+        const countMatch=String(dbCount?.range||'').match(new RegExp('/([0-9]+)$'));
+        if(!countMatch||Number(countMatch[1])!==source.total)
+          throw new Error('Recovery stopped: '+folder+' database count does not match source. Run full import-db instead.');
+        stats[folder]=source.total;
+        stats.messages+=source.total;
+      }
+      console.log('Recovery check passed: '+stats.messages+' existing messages; skipping repeated uploads.');
+    } else {
+      await importFolders(mcp,db,account,runId,stats);
+    }
     try {
       await importDrafts(mcp,db,account,runId,stats);
     } catch(e) {
