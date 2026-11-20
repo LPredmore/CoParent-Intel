@@ -2,6 +2,7 @@
 // Caller supplies existing restricted MCP connection and verified project Secret key.
 // Nothing in this module sends/edits OFW messages or opens unread message bodies.
 import { createHash, randomUUID } from 'node:crypto';
+import { importExpenses } from './expense-import.mjs';
 
 const SOURCE = 'ourfamilywizard';
 const PAGE = 80;
@@ -133,22 +134,6 @@ function attachmentRefsFor(m,account) {
   }
   return [...seen.values()];
 }
-function mapDraft(d,account,runId) {
-  const id=numberId(d?.id);
-  if(!id)throw new Error('Draft with invalid OFW id; no draft skipped silently.');
-  return {
-    source_account:account,source_draft_id:id,
-    draft_key:typeof d.draftKey==='string'?d.draftKey:null,
-    subject:typeof d.subject==='string'?d.subject:'',
-    body:typeof d.body==='string'?d.body:null,
-    modified_at:timestamp(d.modifiedAt),
-    reply_to_id:numberId(d.replyToId),
-    recipients:Array.isArray(d.recipients)?d.recipients:[],
-    revision:typeof d.revision==='string'?d.revision:null,
-    server_confirmed:d.serverConfirmed===true,
-    raw_payload:d,last_import_run_id:runId
-  };
-}
 function eventIdentity(item) {
   // OFW custody TRANSITION items can all have numeric id 1.
   // A type + occurrence clock + parent-IDs composite identifies occurrences.
@@ -209,37 +194,6 @@ async function importFolders(mcp,db,account,runId,stats) {
     stats[folder]=total;
   }
 }
-async function importDrafts(mcp,db,account,runId,stats,{skipLiveVerification=false}={}){
-  let page=1,total=null,count=0;
-  stats.draftsVerified=true;
-  while(true){
-    let r;
-    try {
-      r=await mcp.call('ofw_list_drafts',{page,size:PAGE,view:'compact',verify:page===1 && !skipLiveVerification,autoRefresh:false});
-    } catch(e) {
-      if(page!==1)throw e;
-      stats.draftsVerified=false;
-      console.warn('Live OFW draft verification failed; attempting cache-only recovery.');
-      r=await mcp.call('ofw_list_drafts',{page,size:PAGE,view:'compact',verify:false,autoRefresh:false});
-    }
-    if(!Number.isInteger(r?.total)||r.total<0||!Array.isArray(r.drafts))throw new Error('Unrecognized OFW drafts response');
-    if(r.serverConfirmed!==true) {
-      stats.draftsVerified=false;
-      if(page===1)console.warn('Drafts cannot be verified against live OFW; importing available cached records with server_confirmed=false. '+String(r.verifyNote||r.completeNote||'').slice(0,180));
-    }
-    if(total===null)total=r.total;
-    if(r.total!==total)throw new Error('OFW draft count changed during export; retry.');
-    const expected=Math.min(PAGE,total-count);
-    if(r.drafts.length!==expected)throw new Error('Incomplete OFW drafts page '+page);
-    const rows=r.drafts.map(d=>mapDraft(d,account,runId));
-    // Updated draft contents are allowed to refresh this separate mutable snapshot.
-    await db.upsert('ofw_drafts',rows,'source_account,source_draft_id','merge');
-    count+=rows.length;stats.drafts+=rows.length;
-    if(count===total)break;
-    page++;
-  }
-  console.log('Imported drafts: '+count+'/'+total);
-}
 function months(startYear,endYear) {
   const out=[];
   for(let year=startYear;year<=endYear;year++){
@@ -275,8 +229,8 @@ export async function importToDatabase({mcp,baseUrl,key,remainingOnly=false}) {
   const db=makeClient(baseUrl,key);
   // Ensure the new target schema is installed BEFORE reading any source data.
   await db.call('ofw_messages',{params:{select:'source_message_id',limit:0}});
-  await db.call('ofw_drafts',{params:{select:'source_draft_id',limit:0}});
   await db.call('ofw_calendar_snapshots',{params:{select:'window_start',limit:0}});
+  await db.call('ofw_expenses',{params:{select:'source_expense_id',limit:0}});
   console.log('Verified private OFW import tables in target project.');
   await refreshMessages(mcp);
   const rows=await db.call('ofw_import_runs',{
@@ -289,7 +243,7 @@ export async function importToDatabase({mcp,baseUrl,key,remainingOnly=false}) {
   });
   const runId=rows?.[0]?.id;
   if(typeof runId!=='string')throw new Error('Could not create import run audit row');
-  const stats={messages:0,inbox:0,sent:0,drafts:0,recipients:0,attachmentRefs:0,calendarItems:0,calendarWindows:0,draftsVerified:true};
+  const stats={messages:0,inbox:0,sent:0,recipients:0,attachmentRefs:0,calendarItems:0,calendarWindows:0,expenses:0,expenseCategories:0,expenseReceiptLinks:0};
   let error=null;
   try{
     if(remainingOnly) {
@@ -309,14 +263,10 @@ export async function importToDatabase({mcp,baseUrl,key,remainingOnly=false}) {
     } else {
       await importFolders(mcp,db,account,runId,stats);
     }
-    try {
-      await importDrafts(mcp,db,account,runId,stats,{skipLiveVerification:remainingOnly});
-    } catch(e) {
-      stats.draftsVerified=false;
-      stats.draftsError=String(e?.message||e).slice(0,300);
-      console.warn('Draft import problem: '+stats.draftsError+'. Continuing calendar import; audit will remain partial.');
-    }
+    // OFW drafts are never read, mirrored or saved here. Outbound draft
+    // creation uses the separate "draft" command, with no historic sync.
     await importCalendar(mcp,db,account,runId,stats);
+    await importExpenses({mcp,db,account,runId,stats});
     const expected=stats.inbox+stats.sent;
     if(stats.messages!==expected)throw new Error('Inbox + Sent record totals disagree.');
     // Verify the table's actual source-scoped count, not merely successful HTTP writes.
@@ -328,19 +278,16 @@ export async function importToDatabase({mcp,baseUrl,key,remainingOnly=false}) {
     if(!match)throw new Error('Unable to verify PostgREST message count after insert.');
     const existing=Number(match[1]);
     if(existing<expected)throw new Error('Database contains only '+existing+' of '+expected+' expected OFW message IDs');
-    const draftsVerified=stats.draftsVerified===true && !stats.draftsError;
-    const importStatus=draftsVerified?'completed':'partial';
-    const problem=draftsVerified?null:(stats.draftsError||'Draft cache could not be verified against the OFW server; available cached drafts were preserved as unverified.');
     await db.call('ofw_import_runs',{
       method:'PATCH',params:{id:'eq.'+runId},
-      data:{status:importStatus,completed_at:new Date().toISOString(),expected_messages:expected,imported_messages:stats.messages,
-        error_count:draftsVerified?0:1,error_summary:problem,
-        metadata:{...stats,source:SOURCE,mode:'initial-db-import',account,calendarFromYear:CALENDAR_START_YEAR,verifiedDatabaseMessageCount:existing,unreadBodiesFetched:false}},
+      data:{status:'completed',completed_at:new Date().toISOString(),expected_messages:expected,imported_messages:stats.messages,
+        error_count:0,error_summary:null,
+        metadata:{...stats,source:SOURCE,mode:remainingOnly?'recovery-db-import':'initial-db-import',account,calendarFromYear:CALENDAR_START_YEAR,verifiedDatabaseMessageCount:existing,unreadBodiesFetched:false,draftsImported:false,attachmentBytesImported:false}},
       prefer:'return=minimal'
     });
-    console.log(JSON.stringify({ok:draftsVerified,status:importStatus,runId,project:'zhnpbajmumsbejyoqysr',stats,verifiedDatabaseMessageCount:existing,
-      unreadMessagesOpened:false,ofwMessagesSent:false,lovableDatabaseTouched:false,
-      note:draftsVerified?'Database import completed; attachment file contents were not downloaded.':'Messages/calendar imported, but drafts could not be verified live. Cached drafts (if any) were retained without falsely claiming they are current.'},null,2));
+    console.log(JSON.stringify({ok:true,status:'completed',runId,project:'zhnpbajmumsbejyoqysr',stats,verifiedDatabaseMessageCount:existing,
+      unreadMessagesOpened:false,ofwMessagesSent:false,lovableDatabaseTouched:false,draftsImported:false,
+      note:'Messages, calendar and expenses imported. Drafts deliberately excluded. Binary attachments must be archived separately.'},null,2));
   }catch(e){
     error=e;
     try{
