@@ -300,3 +300,31 @@ export async function importToDatabase({mcp,baseUrl,key,remainingOnly=false}) {
   }
   if(error)throw error;
 }
+
+export async function refreshExpensesOnly({mcp,baseUrl,key}) {
+  const account=sourceAccount();
+  const db=makeClient(baseUrl,key);
+  await db.call('ofw_expenses',{params:{select:'source_expense_id',limit:0}});
+  const result=await db.call('ofw_import_runs',{
+    method:'POST',
+    data:[{source_account:account,external_run_id:'expense-refresh-'+randomUUID(),
+      status:'started',metadata:{source:SOURCE,mode:'expenses-only',draftsImported:false}}],
+    prefer:'return=representation'
+  });
+  const id=result?.[0]?.id;
+  if(typeof id!=='string')throw new Error('Expense refresh audit record was not created');
+  const stats={expenses:0,expenseCategories:0,expenseReceiptLinks:0};
+  try{
+    await importExpenses({mcp,db,account,runId:id,stats});
+    await db.call('ofw_import_runs',{method:'PATCH',params:{id:'eq.'+id},
+      data:{status:'completed',completed_at:new Date().toISOString(),imported_messages:0,
+        metadata:{...stats,source:SOURCE,mode:'expenses-only',draftsImported:false}},prefer:'return=minimal'});
+    console.log(JSON.stringify({ok:true,mode:'expenses-only',project:'zhnpbajmumsbejyoqysr',runId:id,
+      stats,draftsImported:false,ofwExpensesChanged:false,receiptFilesDownloaded:false},null,2));
+  }catch(e){
+    await db.call('ofw_import_runs',{method:'PATCH',params:{id:'eq.'+id},
+      data:{status:'partial',error_count:1,error_summary:String(e?.message||e).slice(0,350),metadata:{...stats,mode:'expenses-only'}},
+      prefer:'return=minimal'}).catch(()=>{});
+    throw e;
+  }
+}
