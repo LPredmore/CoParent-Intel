@@ -211,10 +211,14 @@ async function importFolders(mcp,db,account,runId,stats) {
 }
 async function importDrafts(mcp,db,account,runId,stats){
   let page=1,total=null,count=0;
+  stats.draftsVerified=true;
   while(true){
     const r=await mcp.call('ofw_list_drafts',{page,size:PAGE,view:'compact',verify:page===1,autoRefresh:false});
     if(!Number.isInteger(r?.total)||r.total<0||!Array.isArray(r.drafts))throw new Error('Unrecognized OFW drafts response');
-    if(r.serverConfirmed!==true)throw new Error('OFW drafts not freshly verified; refusing to treat stale drafts as current.');
+    if(r.serverConfirmed!==true) {
+      stats.draftsVerified=false;
+      if(page===1)console.warn('Drafts cannot be verified against live OFW; importing available cached records with server_confirmed=false. '+String(r.verifyNote||r.completeNote||'').slice(0,180));
+    }
     if(total===null)total=r.total;
     if(r.total!==total)throw new Error('OFW draft count changed during export; retry.');
     const expected=Math.min(PAGE,total-count);
@@ -277,11 +281,17 @@ export async function importToDatabase({mcp,baseUrl,key}) {
   });
   const runId=rows?.[0]?.id;
   if(typeof runId!=='string')throw new Error('Could not create import run audit row');
-  const stats={messages:0,inbox:0,sent:0,drafts:0,recipients:0,attachmentRefs:0,calendarItems:0,calendarWindows:0};
+  const stats={messages:0,inbox:0,sent:0,drafts:0,recipients:0,attachmentRefs:0,calendarItems:0,calendarWindows:0,draftsVerified:true};
   let error=null;
   try{
     await importFolders(mcp,db,account,runId,stats);
-    await importDrafts(mcp,db,account,runId,stats);
+    try {
+      await importDrafts(mcp,db,account,runId,stats);
+    } catch(e) {
+      stats.draftsVerified=false;
+      stats.draftsError=String(e?.message||e).slice(0,300);
+      console.warn('Draft import problem: '+stats.draftsError+'. Continuing calendar import; audit will remain partial.');
+    }
     await importCalendar(mcp,db,account,runId,stats);
     const expected=stats.inbox+stats.sent;
     if(stats.messages!==expected)throw new Error('Inbox + Sent record totals disagree.');
