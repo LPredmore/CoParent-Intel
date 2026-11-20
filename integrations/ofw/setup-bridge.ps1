@@ -17,13 +17,19 @@ if ([version]$ver -lt [version]'22.5.0') {throw "Node.js $ver is too old; instal
 New-Item -Path $root -ItemType Directory -Force | Out-Null
 $bridgeSource='https://raw.githubusercontent.com/LPredmore/CoParent-Intel/main/integrations/ofw/bridge.mjs'
 $importSource='https://raw.githubusercontent.com/LPredmore/CoParent-Intel/main/integrations/ofw/import-db.mjs'
+$expenseSource='https://raw.githubusercontent.com/LPredmore/CoParent-Intel/main/integrations/ofw/expense-import.mjs'
+$attachmentSource='https://raw.githubusercontent.com/LPredmore/CoParent-Intel/main/integrations/ofw/attachment-import.mjs'
 $bridge=Join-Path $root 'bridge.mjs'
 $importModule=Join-Path $root 'import-db.mjs'
+$expenseModule=Join-Path $root 'expense-import.mjs'
+$attachmentModule=Join-Path $root 'attachment-import.mjs'
 $credFile=Join-Path $root 'supabase-bridge-key.xml'
 $launch=Join-Path $root 'Start-OFWBridge.ps1'
 Invoke-WebRequest -UseBasicParsing $bridgeSource -OutFile $bridge
 Invoke-WebRequest -UseBasicParsing $importSource -OutFile $importModule
-if (-not (Test-Path $bridge) -or -not (Test-Path $importModule)) { throw 'Bridge or importer download failed' }
+Invoke-WebRequest -UseBasicParsing $expenseSource -OutFile $expenseModule
+Invoke-WebRequest -UseBasicParsing $attachmentSource -OutFile $attachmentModule
+if (-not (Test-Path $bridge) -or -not (Test-Path $importModule) -or -not (Test-Path $expenseModule) -or -not (Test-Path $attachmentModule)) { throw 'Bridge or importer module download failed' }
 Write-Host ''
 Write-Host 'Copy the actual Project URL from Supabase Dashboard > Integrations > Data API (or the project Connect dialog).' -ForegroundColor Cyan
 Write-Host 'The previous hardcoded hostname did not resolve. Do not assume it is the right project.'
