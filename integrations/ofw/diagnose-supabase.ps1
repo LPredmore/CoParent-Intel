@@ -5,7 +5,7 @@
   credentials, the Supabase project, Storage, or OFW records.
 #>
 [CmdletBinding()]
-param()
+param([switch]$RepairSavedKey)
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $root = Join-Path $env:LOCALAPPDATA 'CoParentIntel\OFW'
@@ -69,6 +69,29 @@ function Test-Key([string]$label,[string]$apiKey) {
 $results=@(Test-Key 'Freshly copied Dashboard key' $freshKey)
 if (!$match) { $results+=Test-Key 'Previously saved encrypted key' $savedKey }
 $results | Format-List
+if ($RepairSavedKey) {
+  if ($results[0].Status -ne 200) {
+    throw 'REFUSED: Fresh Dashboard key did not return HTTP 200. Existing saved credential was NOT changed.'
+  }
+  if ($match) {
+    Write-Host 'Existing credential already matches the verified Dashboard key. No replacement needed.' -ForegroundColor Green
+  } else {
+    $candidatePath=Join-Path $root ('supabase-bridge-key.'+[guid]::NewGuid().ToString('N')+'.tmp')
+    try {
+      [pscredential]::new('supabase_secret|zhnpbajmumsbejyoqysr',$freshSecure) | Export-Clixml -LiteralPath $candidatePath -Force
+      $testCred=Import-Clixml -LiteralPath $candidatePath
+      if ($testCred.UserName -ne 'supabase_secret|zhnpbajmumsbejyoqysr') { throw 'Encrypted candidate project binding mismatch.' }
+      if (-not [string]::Equals($freshKey,$testCred.GetNetworkCredential().Password,[StringComparison]::Ordinal)) { throw 'Encrypted candidate differs from validated key. Original credential unchanged.' }
+      Move-Item -LiteralPath $candidatePath -Destination $credentialPath -Force -ErrorAction Stop
+      $written=Import-Clixml -LiteralPath $credentialPath
+      if (-not [string]::Equals($freshKey,$written.GetNetworkCredential().Password,[StringComparison]::Ordinal)) { throw 'Saved credential verification failed AFTER write; do not run sync.' }
+      Write-Host 'REPAIRED: Saved credential now exactly matches the Dashboard key verified by Supabase (HTTP 200).' -ForegroundColor Green
+      Write-Host 'No OFW data was exported. Next: refresh bridge.mjs and run probe.' -ForegroundColor Cyan
+    } finally {
+      if (Test-Path -LiteralPath $candidatePath) { Remove-Item -LiteralPath $candidatePath -Force }
+    }
+  }
+}
 if ($match -and $results[0].Status -eq 401) {
  Write-Host 'STOP: Identical key rejected by a direct PowerShell request. No more bridge/key retries recommended.' -ForegroundColor Yellow
 } elseif ($results[0].Status -ge 200 -and $results[0].Status -lt 300) {
