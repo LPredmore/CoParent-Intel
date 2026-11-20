@@ -206,7 +206,9 @@ async function storage(path, method='GET',body,extra={}) {
       throw new Error('STORAGE_AUTH_INVALID_JWS: Storage rejected bearer auth. Verify the encrypted key exactly matches the key that returns HTTP 200 from /rest/v1/ before investigating gateway translation.');
     }
     const e=new Error('Supabase Storage '+method+' '+res.status+' '+JSON.stringify(val).slice(0,500));
-    e.status=res.status;throw e;
+    e.status=res.status;
+    e.code=typeof val?.code==='string'?val.code:null;
+    throw e;
   }
   return val;
 }
@@ -214,7 +216,10 @@ async function ensureBucket(create=false) {
   let b;
   try { b=await storage('bucket/'+BUCKET); }
   catch(e){
-    if(e.status!==404 || !create) throw e;
+    // Supabase Storage may respond HTTP 400 with JSON code NoSuchBucket,
+    // rather than HTTP 404. Do not mask other 400s as a missing bucket.
+    const missing=e.status===404 || (e.status===400 && e.code==='NoSuchBucket');
+    if(!missing || !create) throw e;
     await storage('bucket','POST',{id:BUCKET,name:BUCKET,public:false});
     b=await storage('bucket/'+BUCKET);
   }
